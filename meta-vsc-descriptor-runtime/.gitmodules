@@ -1,0 +1,4 @@
+[submodule "vsc2022"]
+	path = vsc2022
+	url = https://github.com/facebookresearch/vsc2022
+	branch = main

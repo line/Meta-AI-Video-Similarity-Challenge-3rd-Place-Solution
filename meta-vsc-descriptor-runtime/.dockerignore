@@ -1,0 +1,8 @@
+# Ignore everything
+*
+
+# Allow files and folders with a pattern starting with !
+!vsc2022/LICENSE
+!vsc2022/*.py
+!vsc2022/vsc/*.py
+!runtime

@@ -1,0 +1,4 @@
+git
+libsm6
+libxext6
+build-essential
