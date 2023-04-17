@@ -113,3 +113,28 @@ def sliding_pca_with_ref(
         video_features[k] = _apply_pca(vfs, mat)
 
     return video_features, mat
+
+
+def ensemble_match_results(path: List[str], output_file: str = "match_ensemble.csv") -> str:
+    import pandas as pd
+    import os
+
+    if path[0][-4:] == ".csv":
+        match_result_paths = path
+    else: 
+        match_result_paths = [f"{p}/matches.csv" for p in path]
+    results = []
+    for result_path in match_result_paths:
+        results.append(pd.read_csv(result_path))
+        
+    df_all = pd.concat(results, axis=0, ignore_index=True)
+    df_ensemble = pd.DataFrame(columns=['query_id', 'ref_id', 'query_start', 'query_end', 'ref_start', 'ref_end', 'score'])
+    query_id_all = set(df_all['query_id'])
+    for query_id in query_id_all:
+        df_topk = df_all.loc[df_all['query_id'] == query_id].sort_values(by='score', ascending=False)[:400]
+        df_ensemble = pd.concat([df_ensemble, df_topk], ignore_index=True)
+    df_ensemble['score'] = df_ensemble.groupby(['query_id', 'ref_id', 'query_start', 'query_end', 'ref_start', 'ref_end'])['score'].transform('max')
+    df_ensemble.drop_duplicates(['query_id', 'ref_id', 'query_start', 'query_end', 'ref_start', 'ref_end'], keep='first', inplace=True)
+    match_file_final = f"{output_file}"
+    df_ensemble.to_csv(match_file_final, index=False)
+    return match_file_final
