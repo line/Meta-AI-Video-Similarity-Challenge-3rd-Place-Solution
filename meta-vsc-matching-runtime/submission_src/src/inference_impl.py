@@ -33,7 +33,7 @@ from src.vsc.localization import (
 )
 
 import torch.nn as nn
-from src.model import create_model_in_runtime, create_model_in_runtime_2
+from src.model import create_model_in_runtime, create_model_in_runtime_2, model_nfnetl2
 from src.metadata import FFProbeMetadata, get_video_metadata
 from src.tta import TTA24ViewsTransform, TTA30ViewsTransform, TTA4ViewsTransform, TTA5ViewsTransform
 from src.postproc import sliding_pca
@@ -314,12 +314,24 @@ def match(
         return candidates, matches
 
 
-def worker_process(args, rank, world_size, output_filename):
+def worker_process(args, rank, world_size, output_filename, model_name, ref_path, noise_path, pca_matrix_path):
     logger.info(f"Starting worker {rank} of {world_size}.")
     device = get_device(args, rank, world_size)
 
     logger.info("Loading model")
-    model, transforms = create_model_in_runtime(transforms_device=device)
+    if model_name == "isc":
+        model, transforms = create_model_in_runtime(transforms_device=device)
+    elif model_name == "nfl2":
+        model, transforms = model_nfnetl2(transforms_device=device)
+    elif model_name == "nfl1":
+        model, transforms = model_nfnetl1(transforms_device=device)
+    elif model_name == "effic":
+        model, transforms = model_efficient(transforms_device=device)
+    elif model_name == "vit":
+        model, transforms = create_model_in_runtime_2(transforms_device=device)
+    else:
+        raise ValueError(f"Model {args.model} is not supported")
+
     model = model.to(device).eval()
 
     logger.info("Setting up dataset")
@@ -351,25 +363,25 @@ def worker_process(args, rank, world_size, output_filename):
     del model
     del dataset
 
-    if args.score_norm_features:
-        stride = 2
-        pca_matrix = faiss.read_VectorTransform(args.pca_matrix)
+    if noise_path:
+        stride = args.stride if args.stride is not None else int(args.fps)
+        pca_matrix = faiss.read_VectorTransform(pca_matrix_path)
         queries = sliding_pca(queries=queries, mat=pca_matrix, stride=stride)
 
         queries = score_normalize(
             queries,
-            load_features(args.score_norm_features),
+            load_features(noise_path),
             beta=1.2,
         )
     
-    store_features(output_filename.replace('subset_matches.csv', 'subset_queries.npz'), queries)
-
-    refs = load_features(args.reference_features)
+    os.makedirs(output_filename.replace('subset_matches.csv', 'output'), exist_ok=True)
+    # store_features(output_filename.replace('subset_matches.csv', f'output/subset_queries_{model_name}.npz'), queries)
+    refs = load_features(ref_path)
 
     match(
         queries=queries,
         refs=refs,
-        output_file=output_filename,
+        output_file=output_filename.replace('subset_matches.csv', f'output/matches_{model_name}.csv'),
         tn_max_step=5,
         min_length=3,
         tn_top_k=2,
@@ -430,7 +442,6 @@ def run_inference(dataloader, model, device, transforms=None, tta=True) -> Itera
     if tta:
         timestamps = timestamps.reshape(-1, num_views).transpose(1, 0).ravel()
         feature = feature.reshape(-1, num_views, feature.shape[1]).transpose(1, 0, 2).reshape(-1, feature.shape[1])
-
     yield VideoFeature(
         video_id=name,
         timestamps=timestamps,
