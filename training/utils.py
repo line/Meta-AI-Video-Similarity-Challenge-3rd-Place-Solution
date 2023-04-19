@@ -1,3 +1,18 @@
+"""
+Copyright 2023 LINE Corporation
+
+LINE Corporation licenses this file to you under the Apache License,
+version 2.0 (the "License"); you may not use this file except in compliance
+with the License. You may obtain a copy of the License at:
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+License for the specific language governing permissions and limitations
+under the License.
+"""
 from __future__ import annotations
 import collections
 
@@ -223,7 +238,7 @@ class VSCLitDataModule(pl.LightningDataModule):
         self.collate_fn = collate_fn
 
     def train_dataloader(self):
-        if len(self.train_datasets) == 1:  # 後方互換性のため
+        if len(self.train_datasets) == 1:  # for back compatibility
             return DataLoader(
                 self.train_datasets[0],
                 batch_size=self.train_batch_size,
@@ -292,58 +307,6 @@ class CustomModelCheckpoint(ModelCheckpoint):
             print(f"Saving model checkpoint to {save_dir}")
             for logger in trainer.loggers:
                 logger.after_save_checkpoint(proxy(self))
-
-
-def negative_embedding_subtraction(
-    queries: List[VideoFeature],
-    refs: List[VideoFeature],
-    score_norm_refs: List[VideoFeature],
-    pre_l2_normalize: bool = False,
-    post_l2_normalize: bool = False,
-    beta: float = 1.0,
-    k: int = 10,
-    alpha: float = 1.0,
-) -> Tuple[List[VideoFeature], List[VideoFeature]]:
-    # impl of https://arxiv.org/abs/2112.04323
-
-    if pre_l2_normalize:
-        logger.info("L2 normalizing")
-        queries, refs, score_norm_refs = [
-            transform_features(x, normalize) for x in [queries, refs, score_norm_refs]
-        ]
-
-    logger.info("Applying negative embedding subtraction")
-    index = CandidateGeneration(score_norm_refs, MaxScoreAggregation()).index.index
-    if faiss.get_num_gpus() > 0:
-        index = faiss.index_cpu_to_all_gpus(index)
-
-    negative_embeddings = np.concatenate([vf.feature for vf in score_norm_refs], axis=0)
-
-    adapted_queries = []
-    for query in queries:
-        similarity, ids = index.search(query.feature, k=k)
-        weights = similarity[..., None] ** alpha
-        topk_negative_embeddings = negative_embeddings[ids] * weights
-        subtracted_embedding = topk_negative_embeddings.mean(axis=1) * beta
-        adapted_embedding = query.feature - subtracted_embedding
-        adapted_queries.append(dataclasses.replace(query, feature=adapted_embedding))
-
-    adapted_refs = []
-    for ref in refs:
-        similarity, ids = index.search(ref.feature, k=k)
-        weights = similarity[..., None] ** alpha
-        topk_negative_embeddings = negative_embeddings[ids] * weights
-        subtracted_embedding = topk_negative_embeddings.mean(axis=1) * beta
-        adapted_embedding = ref.feature - subtracted_embedding
-        adapted_refs.append(dataclasses.replace(ref, feature=adapted_embedding))
-
-    if post_l2_normalize:
-        logger.info("L2 normalizing")
-        adapted_queries, adapted_refs = [
-            transform_features(x, normalize) for x in [adapted_queries, adapted_refs]
-        ]
-
-    return adapted_queries, adapted_refs
 
 
 class CustomWriter(BasePredictionWriter):
@@ -445,241 +408,6 @@ class CustomNormalize(nn.Module):
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(mean={self.mean}, std={self.std})"
-
-
-class ArcMarginProduct(nn.Module):
-    r"""Implement of large margin arc distance: :
-        Args:
-            in_features: size of each input sample
-            out_features: size of each output sample
-            s: norm of input feature
-            m: margin
-            cos(theta + m)
-        """
-
-    def __init__(self, in_features, out_features, s=30.0, m=0.50, easy_margin=False, ls_eps=0.0):
-        super(ArcMarginProduct, self).__init__()
-        self.in_features = in_features
-        self.out_features = out_features
-        self.s = s
-        self.m = m
-        self.ls_eps = ls_eps  # label smoothing
-        self.kernel = Parameter(torch.FloatTensor(out_features, in_features))
-        nn.init.xavier_uniform_(self.kernel)
-
-        self.easy_margin = easy_margin
-        self.cos_m = math.cos(m)
-        self.sin_m = math.sin(m)
-        self.th = math.cos(math.pi - m)
-        self.mm = math.sin(math.pi - m) * m
-
-    def forward(self, input, label):
-        # --------------------------- cos(theta) & phi(theta) ---------------------------
-        cosine = F.linear(F.normalize(input), F.normalize(self.kernel))
-        sine = torch.sqrt(1.0 - torch.pow(cosine, 2))
-        phi = cosine * self.cos_m - sine * self.sin_m
-        if self.easy_margin:
-            phi = torch.where(cosine > 0, phi, cosine)
-        else:
-            phi = torch.where(cosine > self.th, phi, cosine - self.mm)
-        # --------------------------- convert label to one-hot ---------------------------
-        # one_hot = torch.zeros(cosine.size(), requires_grad=True, device='cuda')
-        one_hot = torch.zeros(cosine.size(), device='cuda')
-        one_hot.scatter_(1, label.view(-1, 1).long(), 1)
-        if self.ls_eps > 0:
-            one_hot = (1 - self.ls_eps) * one_hot + self.ls_eps / self.out_features
-        # -------------torch.where(out_i = {x_i if condition_i else y_i) -------------
-        output = (one_hot * phi) + ((1.0 - one_hot) * cosine)
-        output *= self.s
-
-        return output, cosine
-
-
-class SubCenterArcFace(nn.Module):
-    """Implementation of
-    `Sub-center ArcFace: Boosting Face Recognition
-    by Large-scale Noisy Web Faces`_.
-    .. _Sub-center ArcFace\: Boosting Face Recognition \
-        by Large-scale Noisy Web Faces:
-        https://ibug.doc.ic.ac.uk/media/uploads/documents/eccv_1445.pdf
-    Args:
-        in_features: size of each input sample.
-        out_features: size of each output sample.
-        s: norm of input feature,
-            Default: ``64.0``.
-        m: margin.
-            Default: ``0.5``.
-        k: number of possible class centroids.
-            Default: ``3``.
-        eps (float, optional): operation accuracy.
-            Default: ``1e-6``.
-    Shape:
-        - Input: :math:`(batch, H_{in})` where
-          :math:`H_{in} = in\_features`.
-        - Output: :math:`(batch, H_{out})` where
-          :math:`H_{out} = out\_features`.
-    Example:
-        >>> layer = SubCenterArcFace(5, 10, s=1.31, m=0.35, k=2)
-        >>> loss_fn = nn.CrosEntropyLoss()
-        >>> embedding = torch.randn(3, 5, requires_grad=True)
-        >>> target = torch.empty(3, dtype=torch.long).random_(10)
-        >>> output = layer(embedding, target)
-        >>> loss = loss_fn(output, target)
-        >>> loss.backward()
-    """
-
-    def __init__(  # noqa: D107
-        self,
-        in_features: int,
-        out_features: int,
-        s: float = 64.0,
-        m: float = 0.5,
-        k: int = 2,
-        eps: float = 1e-6,
-    ):
-        super(SubCenterArcFace, self).__init__()
-        self.in_features = in_features
-        self.out_features = out_features
-
-        self.s = s
-        self.m = m
-        self.k = k
-        self.eps = eps
-
-        self.kernel = nn.Parameter(torch.FloatTensor(k, in_features, out_features))
-        nn.init.xavier_uniform_(self.kernel)
-
-        self.threshold = math.pi - self.m
-
-    def __repr__(self) -> str:
-        """Object representation."""
-        rep = (
-            "SubCenterArcFace("
-            f"in_features={self.in_features},"
-            f"out_features={self.out_features},"
-            f"s={self.s},"
-            f"m={self.m},"
-            f"k={self.k},"
-            f"eps={self.eps}"
-            ")"
-        )
-        return rep
-
-    def forward(self, input: torch.Tensor, target: torch.LongTensor = None) -> torch.Tensor:
-        """
-        Args:
-            input: input features,
-                expected shapes ``BxF`` where ``B``
-                is batch dimension and ``F`` is an
-                input feature dimension.
-            target: target classes,
-                expected shapes ``B`` where
-                ``B`` is batch dimension.
-                If `None` then will be returned
-                projection on centroids.
-                Default is `None`.
-        Returns:
-            tensor (logits) with shapes ``BxC``
-            where ``C`` is a number of classes.
-        """
-        feats = F.normalize(input).unsqueeze(0).expand(self.k, *input.shape)  # k*b*f
-        wght = F.normalize(self.kernel, dim=1)  # k*f*c
-        cos_theta = torch.bmm(feats, wght)  # k*b*f
-        cos_theta = torch.max(cos_theta, dim=0)[0]  # b*f
-        theta = torch.acos(torch.clamp(cos_theta, -1.0 + self.eps, 1.0 - self.eps))
-
-        if target is None:
-            return cos_theta
-
-        one_hot = torch.zeros_like(cos_theta)
-        one_hot.scatter_(1, target.view(-1, 1).long(), 1)
-
-        selected = torch.where(theta > self.threshold, torch.zeros_like(one_hot), one_hot)
-
-        logits = torch.cos(torch.where(selected.bool(), theta + self.m, theta))
-        logits *= self.s
-
-        return logits, cos_theta
-
-
-class CurricularFace(nn.Module):
-    def __init__(self, in_features, out_features, m = 0.5, s = 64.):
-        super(CurricularFace, self).__init__()
-        self.in_features = in_features
-        self.out_features = out_features
-        self.m = m
-        self.s = s
-        self.cos_m = math.cos(m)
-        self.sin_m = math.sin(m)
-        self.threshold = math.cos(math.pi - m)
-        self.mm = math.sin(math.pi - m) * m
-        self.kernel = nn.Parameter(torch.Tensor(in_features, out_features))
-        self.register_buffer('t', torch.zeros(1))
-        nn.init.normal_(self.kernel, std=0.01)
-
-    @staticmethod
-    def l2_norm(input, axis=1):
-        norm = torch.norm(input, 2, axis, True)
-        output = torch.div(input, norm)
-        return output
-
-    def forward(self, embbedings, label):
-        embbedings = self.l2_norm(embbedings, axis = 1)
-        kernel_norm = self.l2_norm(self.kernel, axis = 0)
-        cos_theta = torch.mm(embbedings, kernel_norm)
-        cos_theta = cos_theta.clamp(-1, 1)  # for numerical stability
-        with torch.no_grad():
-            origin_cos = cos_theta.clone()
-        target_logit = cos_theta[torch.arange(0, embbedings.size(0)), label].view(-1, 1)
-
-        sin_theta = torch.sqrt(1.0 - torch.pow(target_logit, 2))
-        cos_theta_m = target_logit * self.cos_m - sin_theta * self.sin_m #cos(target+margin)
-        mask = cos_theta > cos_theta_m
-        final_target_logit = torch.where(target_logit > self.threshold, cos_theta_m, target_logit - self.mm)
-
-        hard_example = cos_theta[mask]
-        with torch.no_grad():
-            self.t = target_logit.mean() * 0.01 + (1 - 0.01) * self.t
-        cos_theta[mask] = hard_example * (self.t + hard_example)
-        cos_theta.scatter_(1, label.view(-1, 1).long(), final_target_logit)
-        output = cos_theta * self.s
-        return output, origin_cos * self.s
-
-
-class AdaCos(nn.Module):
-    def __init__(self, in_features, out_features, m=0.50, theta_zero=math.pi/4, *args, **kwargs):
-        super(AdaCos, self).__init__()
-        self.in_features = in_features
-        self.out_features = out_features
-        self.theta_zero = theta_zero
-        self.s = math.log(out_features - 1) / math.cos(theta_zero)
-        self.m = m
-        self.kernel = Parameter(torch.FloatTensor(out_features, in_features))
-        nn.init.xavier_uniform_(self.kernel)
-
-    def forward(self, input, label):
-        # normalize features
-        x = F.normalize(input)
-        # normalize kernels
-        W = F.normalize(self.kernel)
-        # dot product
-        logits = F.linear(x, W)
-        # add margin
-        theta = torch.acos(torch.clamp(logits, -1.0 + 1e-7, 1.0 - 1e-7))
-        target_logits = torch.cos(theta + self.m)
-        one_hot = torch.zeros_like(logits)
-        one_hot.scatter_(1, label.view(-1, 1).long(), 1)
-        output = logits * (1 - one_hot) + target_logits * one_hot
-        # feature re-scale
-        with torch.no_grad():
-            B_avg = torch.where(one_hot < 1, torch.exp(
-                self.s * logits), torch.zeros_like(logits))
-            B_avg = torch.sum(B_avg) / input.size(0)
-            theta_med = torch.median(theta)
-            self.s = torch.log(
-                B_avg) / torch.cos(torch.min(self.theta_zero * torch.ones_like(theta_med), theta_med))
-        output *= self.s
-        return output
 
 
 class CustomVideoIndex(VideoIndex):
@@ -795,7 +523,6 @@ def knn_search(
 
 
 class TTA30ViewsTransform(nn.Module):
-    """hstack/vstack, 回転（90, 180, 270度）, 左右反転, 上下反転の加工用TTA"""
     def __init__(self, base_transforms=None):
         super().__init__()
         self.base_transforms = base_transforms
@@ -853,7 +580,6 @@ class TTA30ViewsTransform(nn.Module):
 
 
 class TTA24ViewsTransform(nn.Module):
-    """hstack + vstack の加工用TTA"""
     def __init__(self, base_transforms=None):
         super().__init__()
         self.base_transforms = base_transforms
@@ -901,77 +627,3 @@ class TTA24ViewsTransform(nn.Module):
         crops = torch.cat(crops, dim=0)
 
         return crops
-
-
-@dataclass
-class Stream:
-    profile: str
-    width: int
-    height: int
-    coded_width: int
-    coded_height: int
-    pix_fmt: str
-    level: int
-    chroma_location: Optional[str]
-    r_frame_rate: str
-    avg_frame_rate: str
-    time_base: str
-    duration_ts: int
-    duration: float
-    bit_rate: int
-    nb_frames: int
-    sample_aspect_ratio: Optional[str]  # None: (probably) not augmented
-    display_aspect_ratio: Optional[str]
-
-
-@dataclass
-class Format:
-    filename: str
-    nb_streams: int  # 1: video only, 2: video + audio
-    duration: float
-    size: int
-    bit_rate: int
-
-
-@dataclass
-class FFProbeMetadata:
-    stream: Stream
-    format: Format
-
-
-def get_video_metadata(path: str):
-    import ffmpeg
-    probe = ffmpeg.probe(path)
-    for stream in probe["streams"]:
-        if stream["codec_type"] == "video":
-            break
-    format = probe["format"]
-
-    return FFProbeMetadata(
-        stream=Stream(
-            profile=stream["profile"],
-            width=int(stream["width"]),
-            height=int(stream["height"]),
-            coded_width=int(stream["coded_width"]),
-            coded_height=int(stream["coded_height"]),
-            pix_fmt=str(stream["pix_fmt"]),
-            level=int(stream["level"]),
-            chroma_location=stream.get("chroma_location"),
-            r_frame_rate=str(stream["r_frame_rate"]),
-            avg_frame_rate=str(stream["avg_frame_rate"]),
-            time_base=str(stream["time_base"]),
-            duration_ts=int(stream["duration_ts"]),
-            duration=float(stream["duration"]),
-            bit_rate=int(stream["bit_rate"]),
-            nb_frames=int(stream["nb_frames"]),
-            sample_aspect_ratio=stream.get("sample_aspect_ratio"),
-            display_aspect_ratio=stream.get("display_aspect_ratio"),
-        ),
-        format=Format(
-            filename=str(format["filename"]),
-            nb_streams=int(format["nb_streams"]),
-            duration=float(format["duration"]),
-            size=int(format["size"]),
-            bit_rate=int(format["bit_rate"]),
-        )
-    )

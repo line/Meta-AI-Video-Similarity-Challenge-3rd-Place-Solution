@@ -1,3 +1,18 @@
+"""
+Copyright 2023 LINE Corporation
+
+LINE Corporation licenses this file to you under the Apache License,
+version 2.0 (the "License"); you may not use this file except in compliance
+with the License. You may obtain a copy of the License at:
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+License for the specific language governing permissions and limitations
+under the License.
+"""
 from __future__ import annotations
 
 import argparse
@@ -605,43 +620,6 @@ def aggregate_preds_and_evaluate(pred_output_dir, gt_matches=None, only_train_qu
 
 
 if __name__ == "__main__":
-    """Usage:
-python isc_test_length_aware_tta.py \
-    -a isc_ft_v107 \
-    --val-batch-size 1 --input-size 512 --feature_dim 256 \
-    --fps 1 --num_views 30 --len_cap 42 \
-    --ddp_strategy ddp_find_unused_parameters_false \
-    --query_video_dir /app/data/vsc/competition_data/train/query \
-    --ref_video_dir /app/data/vsc/competition_data/train/reference \
-    --test_query_video_dir /app/data/vsc/competition_data/test/query \
-    --test_ref_video_dir /app/data/vsc/competition_data/test/reference \
-    --pred_output_dir isc_test_length_aware/30view \
-    --only_train_query
-
-    CUDA_VISIBLE_DEVICES=0,1,2,3 python isc_test_length_aware_tta.py \
-    -a isc_ft_v107 \
-    --val-batch-size 1 --input-size 512 --feature_dim 256 \
-    --fps 1 --num_views 9 --len_cap 42 \
-    --ddp_strategy ddp_find_unused_parameters_false \
-    --query_video_dir /app/data/vsc/competition_data/train/query \
-    --ref_video_dir /app/data/vsc/competition_data/train/reference \
-    --test_query_video_dir /app/data/vsc/competition_data/test/query \
-    --test_ref_video_dir /app/data/vsc/competition_data/test/reference \
-    --gt_path /share-cvlab/yokoo/vsc/competition_data/train/train_matching_ground_truth.csv \
-    --pred_output_dir isc_test_length_aware/1fps_9view
-
-    CUDA_VISIBLE_DEVICES=4,5,6,7 python isc_test_length_aware_tta.py \
-    -a vit_base_r50_s16_224_in21k --workers 8 \
-    --val-batch-size 1 --input-size 448 --feature_dim 512 \
-    --fps 1 --num_views 5 --len_cap 42 \
-    --ddp_strategy ddp_find_unused_parameters_false \
-    --query_video_dir /app/data/vsc/competition_data/train/query \
-    --ref_video_dir /app/data/vsc/competition_data/train/reference \
-    --test_query_video_dir /app/data/vsc/competition_data/test/query \
-    --test_ref_video_dir /app/data/vsc/competition_data/test/reference \
-    --gt_path /share-cvlab/yokoo/vsc/competition_data/train/train_matching_ground_truth.csv \
-    --pred_output_dir hybrid_preds/1fps_5view --weight v45/train_0315_085057/model.pth
-    """
     parser = argparse.ArgumentParser(description="VSC Image Level Training")
     parser.add_argument(
         "--query_video_dir",

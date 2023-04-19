@@ -302,7 +302,6 @@ def evaluate(
             alpha=2.0,
         )
 
-    # runtime実行時はref側はnormalize済みの特徴量が必要なため
     if mode == "test":
         store_features(Path(output_path) / "test_processed_ref.npz", refs)
     else:

@@ -160,7 +160,6 @@ def score_normalize_with_ref(
     return output
 
 
-# TODO: queriesのみの場合にも対応させる
 def negative_embedding_subtraction(
     queries: List[VideoFeature],
     refs: List[VideoFeature],
