@@ -1,12 +1,10 @@
 --extra-index-url https://download.pytorch.org/whl/cu116
-torch==1.13.1
-torchvision==0.14.1
-torchaudio==0.13.1
+torch==1.12.1+cu116
+torchvision==0.13.1+cu116
+torchaudio==0.12.1
 augly[image,video]~=1.0.0
 pytorch-lightning[deepspeed]~=1.8.6
-pytorchvideo~=0.1.2
 timm~=0.6.12
-transformers~=4.26.1
 opencv-python~=4.6.0
 pytorch-metric-learning~=2.0.0
 deepspeed

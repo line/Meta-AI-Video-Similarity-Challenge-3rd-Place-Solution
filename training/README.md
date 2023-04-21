@@ -1,5 +1,9 @@
 # Training
 
+In the Matching Track, we use a separate model from ISC-dt1 (https://github.com/lyakaap/ISC21-Descriptor-Track-1st), specifically a ViT model with ResNet-50 as its stem, trained on the DISC21 dataset. This model corresponds to the one named `vit_base_r50_s16_224_in21k` in timm. It is worth noting that we use ISC-dt1 as a feature extractor without any fine-tuning and in the Descriptor Track, ISC-dt1 is sololy used thus any trainings are not required.
+
+Here, we describe how to reproduce the training of the `vit_base_r50_s16_224_in21k` model.
+
 ## Setup
 
 Setup submodules:
