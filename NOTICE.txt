@@ -1,0 +1,19 @@
+### Open Source Software Notice ###
+
+This product from LINE Corporation contains the open source software detailed below. Please refer to the indicated open source licenses (as are included following this notice) for the terms and conditions of their use.
+
+
+Please be informed that  LINE Corporation   product may contain open source software listed in to tables below.
+
+meta-vsc-descriptor-runtime  (MIT)
+https://github.com/drivendataorg/meta-vsc-descriptor-runtime
+
+meta-vsc-matching-runtime  (MIT)
+https://github.com/drivendataorg/meta-vsc-matching-runtime
+
+vsc2022  (MIT)
+https://github.com/facebookresearch/vsc2022
+• Meta Platforms Inc. and affiliates
+
+
+MIT : https://spdx.org/licenses/MIT.html
