@@ -432,7 +432,7 @@ def train(args):
         fc_dim=args.feature_dim,
         l2_normalize=args.l2_normalize,
     )
-    data_config = timm.data.resolve_model_data_config(backbone)
+    data_config = timm.data.resolve_data_config(args={}, model=backbone)
 
     if args.weight is not None:
         weight = torch.load(args.weight, map_location="cpu")
