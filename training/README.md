@@ -107,26 +107,3 @@ python v45.py \
   --weight ${WEIGHT_PATH} \
   ${DISC_DATA}
 ```
-
-## Inference
-
-```
-WEIGHT_PATH=v45/train_0315_085057/model.pth  # set the path to the trained model
-STACK_PRED_CSV_PATH=???  # TODO
-python inference.py \
-    -a vit_base_r50_s16_224_in21k --workers 8 \
-    --val-batch-size 1 --input-size 448 --feature_dim 512 \
-    --fps 1 --num_views 5 --len_cap 42 \
-    --ddp_strategy ddp_find_unused_parameters_false \
-    --query_video_dir ${COMPETITION_DATA}/train/query \
-    --ref_video_dir ${COMPETITION_DATA}/train/reference \
-    --test_query_video_dir ${COMPETITION_DATA}/test/query \
-    --test_ref_video_dir ${COMPETITION_DATA}/test/reference \
-    --query_metadata_path ${COMPETITION_DATA}/train/train_query_metadata.csv \
-    --test_ref_metadata_path ${COMPETITION_DATA}/test/test_reference_metadata.csv \
-    --test_query_metadata_path ${COMPETITION_DATA}/test/test_query_metadata.csv \
-    --ref_metadata_path ${COMPETITION_DATA}/train/train_reference_metadata.csv \
-    --gt_path ${COMPETITION_DATA}/train/train_matching_ground_truth.csv \
-    --copy_type_pred_path {STACK_PRED_CSV_PATH} \
-    --pred_output_dir inference_output --weight ${WEIGHT_PATH}
-```

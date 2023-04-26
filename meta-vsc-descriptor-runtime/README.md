@@ -12,6 +12,14 @@ make data-subset DATASET=train SUBSET_PROPORTION=0.1
 make data-subset DATASET=test SUBSET_PROPORTION=0.1
 ```
 
+Prapre the model weights:
+
+```
+wget https://github.com/lyakaap/ISC21-Descriptor-Track-1st/releases/download/v1.0.1/isc_ft_v107.pth.tar -P submission_src/model_assets
+wget https://xxx  -P submission_src/model_assets/disc21_ft_vit_base_r50_s16_224_in21k.pth
+cp your/trained/editing_prediction/model.ckpt submission_src/model_assets/copy_type_pred__convnext_clip.ckpt
+```
+
 Build docker image and enter the container:
 
 ```

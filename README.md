@@ -2,7 +2,7 @@
 
 The 3rd Place Solution of the Meta AI Video Similarity Challenge : Descriptor Track and Matching Track.
 
-You can check our solution tech report from: (WIP)
+You can check our solution tech report from: [3rd Place Solution to Meta AI Video Similarity Challenge](https://arxiv.org/abs/2304.11964)
 
 Please submit an issue rather than PR if you have any suggestions.
 

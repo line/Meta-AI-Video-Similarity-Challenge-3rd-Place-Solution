@@ -145,7 +145,7 @@ def create_model_in_runtime(transforms_device='cpu'):
 
 
 def create_model_in_runtime_2(transforms_device='cpu'):
-    weight_path = "./model_assets/train_0315_085057_model.pth"
+    weight_path = "./model_assets/disc21_ft_vit_base_r50_s16_224_in21k.pth"
     state_dict = torch.load(weight_path, map_location="cpu")
     arch = "vit_base_r50_s16_224_in21k"
     input_size = 448
@@ -192,44 +192,3 @@ def create_model_in_runtime_2(transforms_device='cpu'):
         preprocessor.to(transforms_device)
 
     return model, preprocessor
-
-
-def model_nfnetl2(transforms_device='cpu'):
-    from src.descriptor_2nd.Facebook_AFMultiGPU_model_v23_sy_v9 import ArgsT23_EffNetV2, FacebookModel
-    import numpy as np
-    
-    ckpt_filename = './model_assets/epoch=37-step=161955_LIGHT.ckpt'
-    args = ArgsT23_EffNetV2()
-    args.pretrained_bb = False
-    args.arc_classnum = 40    
-    model = FacebookModel(args)
-    _ = model.restore_checkpoint(ckpt_filename)
-
-    mean = [123.675, 116.28, 103.53]
-    std = [58.395, 57.12, 57.375]
-    if transforms_device == 'cpu':
-        preprocessor = transforms.Compose(
-            [
-                transforms.Resize(args.OUTPUT_WH),
-                # transforms.ToTensor(),
-                ConstDivider(c=1.0),
-                transforms.Normalize(
-                    mean=mean,
-                    std=std,
-                ),
-            ]
-        )
-    else:
-        preprocessor = nn.Sequential(
-            transforms.Resize(args.OUTPUT_WH),
-            ConstDivider(c=1.0),
-            transforms.Normalize(
-                mean=mean,
-                std=std,
-            ),
-        )
-        # preprocessor = torch.jit.script(preprocessor)
-        preprocessor.to(transforms_device)
-    
-    return model, preprocessor
-

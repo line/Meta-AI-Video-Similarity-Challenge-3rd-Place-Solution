@@ -184,19 +184,12 @@ def worker_process(args, rank, world_size, output_files: List[str], dataset_path
         get_device,
         run_inference,
     )
-    from src.model import create_model_in_runtime, create_model_in_runtime_2, create_model_in_runtime_3, create_copy_type_pred_model
+    from src.model import create_model_in_runtime, create_copy_type_pred_model
 
     logger.info(f"Starting worker {rank} of {world_size}.")
     device = get_device(args, rank, world_size)
     logger.info("Loading model")
     model, transforms = create_model_in_runtime(transforms_device=device)
-    # model2, transforms2 = create_model_in_runtime_2(transforms_device=device)
-    # model3, transforms3 = create_model_in_runtime_3(transforms_device=device)
-    # model = model3
-    # transforms = transforms3
-    # model_list = [model, model2]
-    # transforms_list = [transforms, transforms2]
-    # weight_list = [2 / 3, 1 / 3]
     model = model.to(device).eval().half()
 
     copytype_model = create_copy_type_pred_model(transforms_device=device)

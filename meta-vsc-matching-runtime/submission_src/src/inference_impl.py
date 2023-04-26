@@ -33,7 +33,7 @@ from src.vsc.localization import (
 )
 
 import torch.nn as nn
-from src.model import create_model_in_runtime, create_model_in_runtime_2, model_nfnetl2
+from src.model import create_model_in_runtime, create_model_in_runtime_2
 from src.metadata import FFProbeMetadata, get_video_metadata
 from src.tta import TTA24ViewsTransform, TTA30ViewsTransform, TTA4ViewsTransform, TTA5ViewsTransform
 from src.postproc import sliding_pca
@@ -321,12 +321,6 @@ def worker_process(args, rank, world_size, output_filename, model_name, ref_path
     logger.info("Loading model")
     if model_name == "isc":
         model, transforms = create_model_in_runtime(transforms_device=device)
-    elif model_name == "nfl2":
-        model, transforms = model_nfnetl2(transforms_device=device)
-    elif model_name == "nfl1":
-        model, transforms = model_nfnetl1(transforms_device=device)
-    elif model_name == "effic":
-        model, transforms = model_efficient(transforms_device=device)
     elif model_name == "vit":
         model, transforms = create_model_in_runtime_2(transforms_device=device)
     else:

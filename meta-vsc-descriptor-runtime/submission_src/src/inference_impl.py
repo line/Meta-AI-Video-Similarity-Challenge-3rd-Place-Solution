@@ -28,7 +28,7 @@ from src.score_normalization import score_normalize
 from src.vsc.metrics import CandidatePair, Match, average_precision, evaluate_matching_track
 
 import torch.nn as nn
-from src.model import create_model_in_runtime, create_model_in_runtime_2, create_copy_type_pred_model
+from src.model import create_model_in_runtime, create_copy_type_pred_model
 from src.metadata import FFProbeMetadata, get_video_metadata
 from src.tta import TTA4ViewsTransform, TTA5ViewsTransform, TTAHorizontalStackTransform, TTAVerticalStackTransform
 from src.postproc import sliding_pca
