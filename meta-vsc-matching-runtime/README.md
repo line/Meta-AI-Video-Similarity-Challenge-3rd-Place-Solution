@@ -12,19 +12,23 @@ make data-subset DATASET=train SUBSET_PROPORTION=0.1
 make data-subset DATASET=test SUBSET_PROPORTION=0.1
 ```
 
+Set environment variables:
+
+```
+COMPETITION_DATA=/share-cvlab/yokoo/vsc/competition_data  # set the path to the competition data
+OUTPUT_DIR=outputs  # set the path to the output directory
+```
+
 Build docker image and enter the container:
 
 ```
-make interact-container
+make interact-container COMPETITION_DATA=${COMPETITION_DATA}
 ```
 
 Execute the following commands in the container:
 
 ```
 cd submission_src
-
-COMPETITION_DATA=/share-cvlab/yokoo/vsc/competition_data  # set the path to the competition data
-OUTPUT_DIR=outputs  # set the path to the output directory
 
 # extract features
 conda run --no-capture-output -n condaenv python -m src.inference_full \
