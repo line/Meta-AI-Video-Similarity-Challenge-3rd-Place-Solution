@@ -14,7 +14,6 @@ from typing import Collection, Dict, List, NamedTuple, Optional, TextIO, Tuple, 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-
 from sklearn.metrics import average_precision_score
 
 
@@ -216,12 +215,34 @@ class Match(NamedTuple):
         return self.intersection_area(bbox) > 0.0
 
     @classmethod
-    def write_csv(cls, matches: Collection["Match"], file: Union[str, TextIO], drop_dup=False):
+    def write_csv(
+        cls, matches: Collection["Match"], file: Union[str, TextIO], drop_dup=False
+    ):
         df = pd.DataFrame([match._asdict() for match in matches], columns=cls._fields)
         if drop_dup:
-            df['score'] = df.groupby(['query_id', 'ref_id', 'query_start', 'query_end', 'ref_start', 'ref_end'])['score'].transform('max')
-            df.drop_duplicates(['query_id', 'ref_id', 'query_start', 'query_end', 'ref_start', 'ref_end'], keep='first', inplace=True)
-        df = df.sort_values(by='score', ascending=False)
+            df["score"] = df.groupby(
+                [
+                    "query_id",
+                    "ref_id",
+                    "query_start",
+                    "query_end",
+                    "ref_start",
+                    "ref_end",
+                ]
+            )["score"].transform("max")
+            df.drop_duplicates(
+                [
+                    "query_id",
+                    "ref_id",
+                    "query_start",
+                    "query_end",
+                    "ref_start",
+                    "ref_end",
+                ],
+                keep="first",
+                inplace=True,
+            )
+        df = df.sort_values(by="score", ascending=False)
         df.to_csv(file, index=False)
 
     @classmethod

@@ -95,7 +95,7 @@ class ConstDivider(nn.Module):
         return x / self.c
 
 
-def create_model_in_runtime(transforms_device='cpu'):
+def create_model_in_runtime(transforms_device="cpu"):
     weight_path = "./model_assets/isc_ft_v107.pth.tar"
     ckpt = torch.load(weight_path)
     arch = ckpt["arch"]  # tf_efficientnetv2_m_in21ft1k
@@ -117,7 +117,7 @@ def create_model_in_runtime(transforms_device='cpu'):
 
     model.load_state_dict(state_dict)
 
-    if transforms_device == 'cpu':
+    if transforms_device == "cpu":
         preprocessor = transforms.Compose(
             [
                 transforms.Resize((input_size, input_size)),
@@ -158,7 +158,7 @@ class CopyTypePredModel(nn.Module):
         return {l: proba[:, i] for i, l in enumerate(self.labels)}
 
 
-def create_copy_type_pred_model(transforms_device='cpu'):
+def create_copy_type_pred_model(transforms_device="cpu"):
     weight_path = "./model_assets/copy_type_pred__convnext_clip.ckpt"
     state_dict = torch.load(weight_path, map_location="cpu")["state_dict"]
     arch = "convnext_base_in22ft1k"
@@ -167,34 +167,34 @@ def create_copy_type_pred_model(transforms_device='cpu'):
     input_size = (256, 256)
 
     labels = [
-        'add_noise',
-        'blend_videos',
-        'blur',
-        'brightness',
-        'change_aspect_ratio',
-        'color_jitter',
-        'contrast',
-        'crop',
-        'encoding_quality',
-        'grayscale',
-        'hstack',
-        'other',
-        'overlay',
-        'overlay_dots',
-        'overlay_emoji',
-        'overlay_shapes',
-        'overlay_text',
-        'pad',
-        'perspective_transform_and_shake',
-        'pixelization',
-        'rotate',
-        'rotate180_vflip',
-        'rotate90_270',
-        'vstack',
-        'vstack_hstack',
+        "add_noise",
+        "blend_videos",
+        "blur",
+        "brightness",
+        "change_aspect_ratio",
+        "color_jitter",
+        "contrast",
+        "crop",
+        "encoding_quality",
+        "grayscale",
+        "hstack",
+        "other",
+        "overlay",
+        "overlay_dots",
+        "overlay_emoji",
+        "overlay_shapes",
+        "overlay_text",
+        "pad",
+        "perspective_transform_and_shake",
+        "pixelization",
+        "rotate",
+        "rotate180_vflip",
+        "rotate90_270",
+        "vstack",
+        "vstack_hstack",
     ]
 
-    if transforms_device == 'cpu':
+    if transforms_device == "cpu":
         preprocessor = transforms.Compose(
             [
                 transforms.ConvertImageDtype(torch.float32),

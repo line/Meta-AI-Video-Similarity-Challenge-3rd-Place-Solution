@@ -26,10 +26,10 @@ class TTA30ViewsTransform(nn.Module):
     def forward(self, x) -> torch.Tensor:
         *_, h, w = x.shape
 
-        x_top = x[..., :h // 2, :]  # top
-        x_bottom = x[..., h // 2:, :]  # bottom
-        x_left = x[..., :, :w // 2]  # left
-        x_right = x[..., :, w // 2:]  # right
+        x_top = x[..., : h // 2, :]  # top
+        x_bottom = x[..., h // 2 :, :]  # bottom
+        x_left = x[..., :, : w // 2]  # left
+        x_right = x[..., :, w // 2 :]  # right
 
         if self.base_transforms is not None:
             x = self.base_transforms(x)
@@ -83,10 +83,10 @@ class TTA24ViewsTransform(nn.Module):
     def forward(self, x) -> torch.Tensor:
         *_, h, w = x.shape
 
-        x_top_left = x[..., :h // 2, :w // 2]  # top_left
-        x_top_right = x[..., :h // 2, w // 2:]  # top_right
-        x_bottom_left = x[..., h // 2:, :w // 2]  # bottom_left
-        x_bottom_right = x[..., h // 2:, w // 2:]  # bottom_right
+        x_top_left = x[..., : h // 2, : w // 2]  # top_left
+        x_top_right = x[..., : h // 2, w // 2 :]  # top_right
+        x_bottom_left = x[..., h // 2 :, : w // 2]  # bottom_left
+        x_bottom_right = x[..., h // 2 :, w // 2 :]  # bottom_right
 
         if self.base_transforms is not None:
             x_top_left = self.base_transforms(x_top_left)
@@ -133,10 +133,10 @@ class TTA5ViewsTransform(nn.Module):
     def forward(self, x) -> torch.Tensor:
         *_, h, w = x.shape
 
-        x_top = x[..., :h // 2, :]  # top
-        x_bottom = x[..., h // 2:, :]  # bottom
-        x_left = x[..., :, :w // 2]  # left
-        x_right = x[..., :, w // 2:]  # right
+        x_top = x[..., : h // 2, :]  # top
+        x_bottom = x[..., h // 2 :, :]  # bottom
+        x_left = x[..., :, : w // 2]  # left
+        x_right = x[..., :, w // 2 :]  # right
 
         if self.base_transforms is not None:
             x = self.base_transforms(x)
@@ -165,10 +165,10 @@ class TTA4ViewsTransform(nn.Module):
     def forward(self, x) -> torch.Tensor:
         *_, h, w = x.shape
 
-        x_top_left = x[..., :h // 2, :w // 2]  # top_left
-        x_top_right = x[..., :h // 2, w // 2:]  # top_right
-        x_bottom_left = x[..., h // 2:, :w // 2]  # bottom_left
-        x_bottom_right = x[..., h // 2:, w // 2:]  # bottom_right
+        x_top_left = x[..., : h // 2, : w // 2]  # top_left
+        x_top_right = x[..., : h // 2, w // 2 :]  # top_right
+        x_bottom_left = x[..., h // 2 :, : w // 2]  # bottom_left
+        x_bottom_right = x[..., h // 2 :, w // 2 :]  # bottom_right
 
         if self.base_transforms is not None:
             x_top_left = self.base_transforms(x_top_left)

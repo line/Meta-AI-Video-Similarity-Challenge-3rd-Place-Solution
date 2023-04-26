@@ -1,14 +1,14 @@
 import json
 from pathlib import Path
-from typing import Callable, List, Dict, Optional
+from typing import Callable, Dict, List, Optional
 
 import decord
 import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
 import torch
-from torch.utils.data import DataLoader
 from sklearn.model_selection import train_test_split
+from torch.utils.data import DataLoader
 
 
 class Dataset(torch.utils.data.Dataset):
@@ -130,16 +130,20 @@ class VscDataModule(pl.LightningDataModule):
         transform: Optional[Callable],
         random_relpos_offset: float,
     ) -> pd.DataFrame:
-        dataset = (
-            pd.DataFrame(metadata)
-            .join(
-                pd.DataFrame({"relative_pos": np.linspace(
-                    0.1, 0.9, self.frames_per_video, dtype=float)}),
-                how="cross",
-            )
+        dataset = pd.DataFrame(metadata).join(
+            pd.DataFrame(
+                {
+                    "relative_pos": np.linspace(
+                        0.1, 0.9, self.frames_per_video, dtype=float
+                    )
+                }
+            ),
+            how="cross",
         )
 
-        return Dataset(dataset, n_labels, transform, self.tensor_format, random_relpos_offset)
+        return Dataset(
+            dataset, n_labels, transform, self.tensor_format, random_relpos_offset
+        )
 
     def train_dataloader(self):
         return DataLoader(

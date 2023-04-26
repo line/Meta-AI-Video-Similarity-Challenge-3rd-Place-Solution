@@ -95,7 +95,7 @@ class ConstDivider(nn.Module):
         return x / self.c
 
 
-def create_model_in_runtime(transforms_device='cpu'):
+def create_model_in_runtime(transforms_device="cpu"):
     weight_path = "./model_assets/isc_ft_v107.pth.tar"
     ckpt = torch.load(weight_path)
     arch = ckpt["arch"]  # tf_efficientnetv2_m_in21ft1k
@@ -117,7 +117,7 @@ def create_model_in_runtime(transforms_device='cpu'):
 
     model.load_state_dict(state_dict)
 
-    if transforms_device == 'cpu':
+    if transforms_device == "cpu":
         preprocessor = transforms.Compose(
             [
                 transforms.Resize((input_size, input_size)),
@@ -144,7 +144,7 @@ def create_model_in_runtime(transforms_device='cpu'):
     return model, preprocessor
 
 
-def create_model_in_runtime_2(transforms_device='cpu'):
+def create_model_in_runtime_2(transforms_device="cpu"):
     weight_path = "./model_assets/disc21_ft_vit_base_r50_s16_224_in21k.pth"
     state_dict = torch.load(weight_path, map_location="cpu")
     arch = "vit_base_r50_s16_224_in21k"
@@ -154,7 +154,9 @@ def create_model_in_runtime_2(transforms_device='cpu'):
     try:
         backbone = timm.create_model(arch, features_only=True, pretrained=False)
     except:
-        backbone = timm.create_model(arch, pretrained=False, num_classes=0, img_size=(input_size, input_size))
+        backbone = timm.create_model(
+            arch, pretrained=False, num_classes=0, img_size=(input_size, input_size)
+        )
     model = ISCNet(
         backbone=backbone,
         fc_dim=feature_dim,
@@ -167,7 +169,7 @@ def create_model_in_runtime_2(transforms_device='cpu'):
 
     model.to("cuda").train(False)
 
-    if transforms_device == 'cpu':
+    if transforms_device == "cpu":
         preprocessor = transforms.Compose(
             [
                 transforms.Resize((input_size, input_size)),

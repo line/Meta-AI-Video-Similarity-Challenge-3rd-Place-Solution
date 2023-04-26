@@ -10,10 +10,8 @@ from typing import Callable, List, Tuple
 import faiss  # @manual
 import numpy as np
 from sklearn.preprocessing import normalize
-
 from src.vsc.candidates import CandidateGeneration, MaxScoreAggregation
 from src.vsc.index import VideoFeature
-
 
 logger = logging.getLogger("score_normalization.py")
 logger.setLevel(logging.INFO)

@@ -16,13 +16,12 @@ under the License.
 import os
 from typing import Iterable, Optional, Tuple
 
-import numpy as np
-from PIL import Image
 import decord
+import numpy as np
 import torch
-from torchvision.datasets.folder import default_loader
-
+from PIL import Image
 from src.video_reader.video_reader import VideoReader
+from torchvision.datasets.folder import default_loader
 
 ImageT = Image.Image
 
@@ -59,12 +58,12 @@ class DecordVideoReader(VideoReader):
         frames = reader.get_batch(frame_ids).asnumpy()
 
         for i, frame in enumerate(frames):
-            if self.output_type == 'pil':
+            if self.output_type == "pil":
                 img = Image.fromarray(frame).convert("RGB")
-            elif self.output_type == 'tensor':
+            elif self.output_type == "tensor":
                 img = torch.as_tensor(frame).permute(2, 0, 1)
             yield (
                 i / self.original_fps,
-                (i+1) / self.original_fps,
+                (i + 1) / self.original_fps,
                 img,
             )

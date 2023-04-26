@@ -73,7 +73,9 @@ dataset_parser.add_argument(
 )
 dataset_parser.add_argument("--ffmpeg_path", default="ffmpeg")
 dataset_parser.add_argument("--score_norm_features", default="./noise.npz")
-dataset_parser.add_argument("--reference_features", default="./reference_descriptor.npz")
+dataset_parser.add_argument(
+    "--reference_features", default="./reference_descriptor.npz"
+)
 dataset_parser.add_argument("--pca_matrix", default="./pca_matrix.bin")
 dataset_parser.add_argument("--gt_path")
 
@@ -97,7 +99,11 @@ def main(args):
 
     if args.video_reader == "DECORD":
         import subprocess
-        subprocess.run(["pip", "install", "wheels/decord-0.6.0-py3-none-manylinux2010_x86_64.whl"], check=True)
+
+        subprocess.run(
+            ["pip", "install", "wheels/decord-0.6.0-py3-none-manylinux2010_x86_64.whl"],
+            check=True,
+        )
 
     with tempfile.TemporaryDirectory() as tmp_path:
         os.makedirs(os.path.dirname(args.output_file), exist_ok=True)

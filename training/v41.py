@@ -16,50 +16,45 @@ under the License.
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import os
-import pickle
 import random
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Collection
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
 import timm
 import torch
+import torch.backends.cudnn as cudnn
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.backends.cudnn as cudnn
 import torch.optim
 import torch.utils.data
-import torchvision
-import wandb
 from augly.image import (
     EncodingQuality,
     OneOf,
     RandomBlur,
     RandomEmojiOverlay,
+    RandomNoise,
     RandomPixelization,
     RandomRotation,
-    RandomNoise,
 )
 from augly.image.functional import overlay_image
 from augly.image.transforms import BaseTransform
-from isc_feature_extractor import create_model
 from isc_feature_extractor.model import ISCNet
 from loguru import logger
 from PIL import Image
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.plugins import NativeSyncBatchNorm
-from pytorch_lightning.utilities import rank_zero_only, rank_zero_info
 from pytorch_metric_learning import losses
 from pytorch_metric_learning.utils import distributed as pml_dist
 from torchvision.transforms import (
     ColorJitter,
     Compose,
     Normalize,
+    RandomErasing,
     RandomGrayscale,
     RandomHorizontalFlip,
     RandomPerspective,
@@ -67,10 +62,10 @@ from torchvision.transforms import (
     RandomVerticalFlip,
     Resize,
     ToTensor,
-    RandomErasing,
 )
 from utils import (
     CustomModelCheckpoint,
+    CustomNormalize,
     CustomWriter,
     NCropsTransform,
     RandomOverlayText,
@@ -81,13 +76,15 @@ from utils import (
     cosine_scheduler,
     decord_clip_reader,
     knn_search,
-    CustomNormalize,
 )
-
 from vsc.baseline.score_normalization import score_normalize
-from vsc.index import PairMatches, VideoFeature, VideoIndex
-from vsc.metrics import CandidatePair, Dataset, Match, average_precision, format_video_id
-from vsc.storage import same_value_ranges, store_features
+from vsc.index import VideoFeature
+from vsc.metrics import (
+    CandidatePair,
+    Match,
+    average_precision,
+)
+from vsc.storage import store_features
 
 ver = __file__.replace(".py", "")
 
@@ -102,9 +99,7 @@ class ISCNet(nn.Module):
         super().__init__()
 
         self.backbone = backbone
-        self.fc = nn.Linear(
-            self.backbone.num_features, fc_dim, bias=False
-        )
+        self.fc = nn.Linear(self.backbone.num_features, fc_dim, bias=False)
         self.bn = nn.BatchNorm1d(fc_dim)
         self._init_params()
         self.l2_normalize = l2_normalize
@@ -218,10 +213,10 @@ class VSCLitModule(pl.LightningModule):
                 for _clip in clip:  # _clip: (T, C, H, W)
                     crops = [
                         _clip,
-                        _clip[:, :, :_clip.shape[-2] // 2, :],
-                        _clip[:, :, _clip.shape[-2] // 2:],
-                        _clip[:, :, :, :_clip.shape[-1] // 2],
-                        _clip[:, :, :, _clip.shape[-1] // 2:],
+                        _clip[:, :, : _clip.shape[-2] // 2, :],
+                        _clip[:, :, _clip.shape[-2] // 2 :],
+                        _clip[:, :, :, : _clip.shape[-1] // 2],
+                        _clip[:, :, :, _clip.shape[-1] // 2 :],
                     ]
                     crops = torch.cat([self.val_transform(_) for _ in crops], dim=0)
                     all_crops.append(crops)
@@ -239,12 +234,7 @@ class VSCLitModule(pl.LightningModule):
 
     def configure_optimizers(self):
         def is_no_decay_param(n, p):
-            return (
-                p.ndim < 2
-                or "norm" in n
-                or "bias" in n
-                or "gain" in n
-            )
+            return p.ndim < 2 or "norm" in n or "bias" in n or "gain" in n
 
         # # TODO
         # for name, param in self.model.backbone.named_parameters():
@@ -256,9 +246,9 @@ class VSCLitModule(pl.LightningModule):
         no_decay = []
         # added_params = []
         added_param_names = [
-            'model.fc.weight',
-            'model.bn.weight',
-            'model.bn.bias',
+            "model.fc.weight",
+            "model.bn.weight",
+            "model.bn.bias",
         ]
         added_params = []
         for name, param in self.named_parameters():
@@ -278,7 +268,11 @@ class VSCLitModule(pl.LightningModule):
         optim_params = [
             {"params": no_decay, "lr": self.args.lr, "weight_decay": 0.0},
             {"params": decay, "lr": self.args.lr, "weight_decay": self.args.wd},
-            {"params": added_params, "lr": self.args.lr * 5, "weight_decay": self.args.wd * 10},
+            {
+                "params": added_params,
+                "lr": self.args.lr * 5,
+                "weight_decay": self.args.wd * 10,
+            },
         ]
         if self.args.optimizer == "adamw":
             optimizer = torch.optim.AdamW(optim_params)
@@ -288,7 +282,9 @@ class VSCLitModule(pl.LightningModule):
             raise ValueError(f"Unknown optimizer: {self.args.optimizer}")
 
         if self.args.warmup_steps > 0:
-            num_training_steps = len(self.trainer.datamodule.train_dataloader()) * self.args.epochs
+            num_training_steps = (
+                len(self.trainer.datamodule.train_dataloader()) * self.args.epochs
+            )
             scheduler = {
                 "scheduler": cosine_scheduler(
                     optimizer,
@@ -374,7 +370,9 @@ class RandomCompositeImageAndResizedCrop(BaseTransform):
                 y_pos=random.uniform(0.0, 1.0 - overlay_size),
                 metadata=metadata,
             )
-            return RandomResizedCrop(self.input_size, scale=(self.moderate_scale_lower, 1.0))(image)
+            return RandomResizedCrop(
+                self.input_size, scale=(self.moderate_scale_lower, 1.0)
+            )(image)
 
         elif composite_way == "alpha_blending":
             blended_image = Image.open(path)
@@ -387,26 +385,38 @@ class RandomCompositeImageAndResizedCrop(BaseTransform):
                 y_pos=0.0,
                 metadata=metadata,
             )
-            return RandomResizedCrop(self.input_size, scale=(self.moderate_scale_lower, 1.0))(image)
+            return RandomResizedCrop(
+                self.input_size, scale=(self.moderate_scale_lower, 1.0)
+            )(image)
 
         elif composite_way == "vertical_stacking":
             stacked_image = Image.open(path)
             stacked_image = stacked_image.resize((image.width, image.height))
             # factor = image.width / stacked_image.width
             # stacked_image = stacked_image.resize((image.width, int(stacked_image.height * factor)))
-            image = Image.fromarray(np.concatenate([np.array(image), np.array(stacked_image)], axis=0))
-            return RandomResizedCrop(self.input_size, scale=(self.moderate_scale_lower, 1.0))(image)
+            image = Image.fromarray(
+                np.concatenate([np.array(image), np.array(stacked_image)], axis=0)
+            )
+            return RandomResizedCrop(
+                self.input_size, scale=(self.moderate_scale_lower, 1.0)
+            )(image)
 
         elif composite_way == "horizontal_stacking":
             stacked_image = Image.open(path)
             stacked_image = stacked_image.resize((image.width, image.height))
             # factor = image.height / stacked_image.height
             # stacked_image = stacked_image.resize((int(stacked_image.width * factor), image.height))
-            image = Image.fromarray(np.concatenate([np.array(image), np.array(stacked_image)], axis=1))
-            return RandomResizedCrop(self.input_size, scale=(self.moderate_scale_lower, 1.0))(image)
+            image = Image.fromarray(
+                np.concatenate([np.array(image), np.array(stacked_image)], axis=1)
+            )
+            return RandomResizedCrop(
+                self.input_size, scale=(self.moderate_scale_lower, 1.0)
+            )(image)
 
         elif composite_way == "nothing":
-            return RandomResizedCrop(self.input_size, scale=(self.hard_scale_lower, 1.0))(image)
+            return RandomResizedCrop(
+                self.input_size, scale=(self.hard_scale_lower, 1.0)
+            )(image)
 
         else:
             raise ValueError("Invalid composite way")
@@ -426,7 +436,9 @@ def train(args):
     if len(input_size) == 1:
         input_size = (input_size[0], input_size[0])
 
-    backbone = timm.create_model(args.arch, num_classes=0, pretrained=True, img_size=input_size)
+    backbone = timm.create_model(
+        args.arch, num_classes=0, pretrained=True, img_size=input_size
+    )
     model = ISCNet(
         backbone=backbone,
         fc_dim=args.feature_dim,
@@ -436,37 +448,30 @@ def train(args):
 
     if args.weight is not None:
         from timm.layers import resample_abs_pos_embed
+
         weight = torch.load(args.weight, map_location="cpu")
-        weight['backbone.pos_embed'] = resample_abs_pos_embed(
-            weight['backbone.pos_embed'].float(), new_size=[input_size[0] // 16, input_size[1] // 16]).half()
+        weight["backbone.pos_embed"] = resample_abs_pos_embed(
+            weight["backbone.pos_embed"].float(),
+            new_size=[input_size[0] // 16, input_size[1] // 16],
+        ).half()
         model.load_state_dict(weight)
 
-    loss_fn = losses.ContrastiveLoss(pos_margin=args.pos_margin, neg_margin=args.neg_margin)
+    loss_fn = losses.ContrastiveLoss(
+        pos_margin=args.pos_margin, neg_margin=args.neg_margin
+    )
     if args.memory_size > 0:
         loss_fn = losses.CrossBatchMemory(
             loss_fn, embedding_size=args.feature_dim, memory_size=args.memory_size
         )
     loss_fn = pml_dist.DistributedLossWrapper(loss=loss_fn, efficient=args.efficient)
 
-    # train_paths_cache_path = Path(args.data) / "train_paths_cache.pkl"
-    # if train_paths_cache_path.exists():
-    #     with open(train_paths_cache_path, "rb") as f:
-    #         train_paths = pickle.load(f)
-    # else:
-    #     train_paths = (
-    #         list((Path(args.data) / "train_images").glob('**/*.jpg'))
-    #         + list((Path(args.data) / "reference_images").glob('**/*.jpg'))
-    #     )
-    #     with open(train_paths_cache_path, "wb") as f:
-    #         pickle.dump(train_paths, f)
-    train_paths = (
-        list((Path(args.data) / "train_images").glob('**/*.jpg'))
-        + list((Path(args.data) / "reference_images").glob('**/*.jpg'))
+    train_paths = list((Path(args.data) / "train_images").glob("**/*.jpg")) + list(
+        (Path(args.data) / "reference_images").glob("**/*.jpg")
     )
-    train_paths = train_paths[:args.sample_size]
-    print('training sample size:', len(train_paths))
+    train_paths = train_paths[: args.sample_size]
+    print("training sample size:", len(train_paths))
 
-    normalize_rgb = Normalize(mean=data_config['mean'], std=data_config['std'])
+    normalize_rgb = Normalize(mean=data_config["mean"], std=data_config["std"])
     aug_moderate = [
         RandomResizedCrop(input_size, scale=(0.7, 1.0)),
         RandomHorizontalFlip(),
@@ -483,24 +488,35 @@ def train(args):
         RandomHorizontalFlip(p=0.5),
         RandomVerticalFlip(p=0.05),
         RandomOverlayText(p=0.1),
-        RandomEmojiOverlay(p=0.05, emoji_size=(0.1, 0.3), x_pos=(0.0, 1.0), y_pos=(0.0, 1.0), seed=None),
+        RandomEmojiOverlay(
+            p=0.05, emoji_size=(0.1, 0.3), x_pos=(0.0, 1.0), y_pos=(0.0, 1.0), seed=None
+        ),
         RandomNoise(p=0.1),
     ]
     aug_hard = [
         RandomRotation(p=0.05),
         RandomCompositeImageAndResizedCrop(
-            train_paths, opacity_lower=0.6, size_lower=0.3, size_upper=0.7,
-            input_size=input_size, moderate_scale_lower=0.8, hard_scale_lower=0.5, overlay_p=0.05,
-            alpha_blending_p=0.05, horizontal_stacking_p=0.0, vertical_stacking_p=0.0, p=1.0,
+            train_paths,
+            opacity_lower=0.6,
+            size_lower=0.3,
+            size_upper=0.7,
+            input_size=input_size,
+            moderate_scale_lower=0.8,
+            hard_scale_lower=0.5,
+            overlay_p=0.05,
+            alpha_blending_p=0.05,
+            horizontal_stacking_p=0.0,
+            vertical_stacking_p=0.0,
+            p=1.0,
         ),
         ShuffledAug(aug_list),
         convert2rgb,
         ToTensor(),
-        RandomErasing(value='random', p=0.05),
+        RandomErasing(value="random", p=0.05),
         normalize_rgb,
     ]
 
-    normalize_rgb = CustomNormalize(mean=data_config['mean'], std=data_config['std'])
+    normalize_rgb = CustomNormalize(mean=data_config["mean"], std=data_config["std"])
     t_val = nn.Sequential(
         Resize(size=input_size),
         normalize_rgb,
@@ -583,21 +599,30 @@ def predict(args, pl_model=None):
         ref_subset_ids = sorted(gt["ref_id"].unique().tolist())
         noise_size = 1024
         noise_subset_ids = [
-            d.stem for d in sorted(Path(args.noise_video_dir).glob("*.mp4"))[:noise_size]
+            d.stem
+            for d in sorted(Path(args.noise_video_dir).glob("*.mp4"))[:noise_size]
         ]
         query_ids = query_subset_ids
         ref_ids = ref_subset_ids
         noise_ids = noise_subset_ids
     else:
-        query_ids = pd.read_csv(args.query_metadata_path, usecols=["video_id"])['video_id'].tolist()
-        ref_ids = pd.read_csv(args.ref_metadata_path, usecols=["video_id"])['video_id'].tolist()
-        noise_ids = pd.read_csv(args.noise_metadata_path, usecols=["video_id"])['video_id'].tolist()
+        query_ids = pd.read_csv(args.query_metadata_path, usecols=["video_id"])[
+            "video_id"
+        ].tolist()
+        ref_ids = pd.read_csv(args.ref_metadata_path, usecols=["video_id"])[
+            "video_id"
+        ].tolist()
+        noise_ids = pd.read_csv(args.noise_metadata_path, usecols=["video_id"])[
+            "video_id"
+        ].tolist()
 
     input_size = tuple(map(int, args.input_size.split("x")))
     if len(input_size) == 1:
         input_size = (input_size[0], input_size[0])
 
-    backbone = timm.create_model(args.arch, num_classes=0, pretrained=True, img_size=input_size)
+    backbone = timm.create_model(
+        args.arch, num_classes=0, pretrained=True, img_size=input_size
+    )
     model = ISCNet(
         backbone=backbone,
         fc_dim=args.feature_dim,
@@ -605,7 +630,7 @@ def predict(args, pl_model=None):
     )
     data_config = timm.data.resolve_model_data_config(backbone)
 
-    normalize_rgb = CustomNormalize(mean=data_config['mean'], std=data_config['std'])
+    normalize_rgb = CustomNormalize(mean=data_config["mean"], std=data_config["std"])
     t_val = nn.Sequential(
         Resize(size=input_size),
         normalize_rgb,
@@ -665,7 +690,9 @@ def predict(args, pl_model=None):
         num_sanity_val_steps=0,
         callbacks=[pred_writer],
     )
-    trainer.predict(pl_model, dataloaders=pl_dm.val_dataloader(), return_predictions=False)
+    trainer.predict(
+        pl_model, dataloaders=pl_dm.val_dataloader(), return_predictions=False
+    )
 
     torch.distributed.barrier()
 
@@ -700,7 +727,9 @@ def aggregate_preds_and_evaluate(
         flat_batch_indices = sum(batch_indices[0], [])
         embeddings, video_id, frame_pos = list(zip(*predictions[0]))
         flat_predictions = torch.cat(embeddings)
-        flat_predictions = flat_predictions.reshape(-1, num_frames, flat_predictions.shape[-1])
+        flat_predictions = flat_predictions.reshape(
+            -1, num_frames, flat_predictions.shape[-1]
+        )
         flat_frame_pos = np.concatenate([np.stack(f) for f in frame_pos], axis=0)
         query_all_batch_indices.extend(flat_batch_indices)
         query_all_preds.append(flat_predictions)
@@ -709,7 +738,9 @@ def aggregate_preds_and_evaluate(
         flat_batch_indices = sum(batch_indices[1], [])
         embeddings, video_id, frame_pos = list(zip(*predictions[1]))
         flat_predictions = torch.cat(embeddings)
-        flat_predictions = flat_predictions.reshape(-1, num_frames, flat_predictions.shape[-1])
+        flat_predictions = flat_predictions.reshape(
+            -1, num_frames, flat_predictions.shape[-1]
+        )
         flat_frame_pos = np.concatenate([np.stack(f) for f in frame_pos], axis=0)
         ref_all_batch_indices.extend(flat_batch_indices)
         ref_all_preds.append(flat_predictions)
@@ -718,7 +749,9 @@ def aggregate_preds_and_evaluate(
         flat_batch_indices = sum(batch_indices[2], [])
         embeddings, video_id, frame_pos = list(zip(*predictions[2]))
         flat_predictions = torch.cat(embeddings)
-        flat_predictions = flat_predictions.reshape(-1, num_frames, flat_predictions.shape[-1])
+        flat_predictions = flat_predictions.reshape(
+            -1, num_frames, flat_predictions.shape[-1]
+        )
         flat_frame_pos = np.concatenate([np.stack(f) for f in frame_pos], axis=0)
         noise_all_batch_indices.extend(flat_batch_indices)
         noise_all_preds.append(flat_predictions)
@@ -757,19 +790,31 @@ def aggregate_preds_and_evaluate(
         return video_features
 
     if args.multi_crops:
-        sorted_query_all_frame_pos = np.concatenate([sorted_query_all_frame_pos for _ in range(num_views)], axis=1)
-        sorted_ref_all_frame_pos = np.concatenate([sorted_ref_all_frame_pos for _ in range(num_views)], axis=1)
-        sorted_noise_all_frame_pos = np.concatenate([sorted_noise_all_frame_pos for _ in range(num_views)], axis=1)
+        sorted_query_all_frame_pos = np.concatenate(
+            [sorted_query_all_frame_pos for _ in range(num_views)], axis=1
+        )
+        sorted_ref_all_frame_pos = np.concatenate(
+            [sorted_ref_all_frame_pos for _ in range(num_views)], axis=1
+        )
+        sorted_noise_all_frame_pos = np.concatenate(
+            [sorted_noise_all_frame_pos for _ in range(num_views)], axis=1
+        )
 
     video_features = {
         "query": _construct_video_features(
-            video_ids=query_ids, embeddings=sorted_query_all_preds, timestamps=sorted_query_all_frame_pos
+            video_ids=query_ids,
+            embeddings=sorted_query_all_preds,
+            timestamps=sorted_query_all_frame_pos,
         ),
         "ref": _construct_video_features(
-            video_ids=ref_ids, embeddings=sorted_ref_all_preds, timestamps=sorted_ref_all_frame_pos
+            video_ids=ref_ids,
+            embeddings=sorted_ref_all_preds,
+            timestamps=sorted_ref_all_frame_pos,
         ),
         "noise": _construct_video_features(
-            video_ids=noise_ids, embeddings=sorted_noise_all_preds, timestamps=sorted_noise_all_frame_pos
+            video_ids=noise_ids,
+            embeddings=sorted_noise_all_preds,
+            timestamps=sorted_noise_all_frame_pos,
         ),
     }
     for split, vfs in video_features.items():
@@ -784,7 +829,7 @@ def aggregate_preds_and_evaluate(
 
     candidates = knn_search(queries, refs, retrieve_per_query=25, use_gpu=True)
     CandidatePair.write_csv(candidates, pred_output_dir / "candidates.csv")
-    print('candidates saved:', pred_output_dir / "candidates.csv")
+    print("candidates saved:", pred_output_dir / "candidates.csv")
 
     ap = average_precision(CandidatePair.from_matches(gt_matches), candidates)
     logger.info(f"AP: {ap.ap:.4f}")
@@ -834,7 +879,9 @@ if __name__ == "__main__":
         type=str,
         required=True,
     )
-    parser.add_argument("-a", "--arch", metavar="ARCH", default="swin_base_patch4_window7_224")
+    parser.add_argument(
+        "-a", "--arch", metavar="ARCH", default="swin_base_patch4_window7_224"
+    )
     parser.add_argument("--workers", default=os.cpu_count(), type=int)
     parser.add_argument("--epochs", default=100, type=int)
     parser.add_argument("-b", "--batch-size", default=512, type=int)
@@ -842,7 +889,9 @@ if __name__ == "__main__":
     parser.add_argument("--lr", default=0.05, type=float)
     parser.add_argument("--momentum", default=0.9, type=float)
     parser.add_argument("--wd", default=1e-4, type=float)
-    parser.add_argument("--seed", default=None, type=int, help="seed for initializing training. ")
+    parser.add_argument(
+        "--seed", default=None, type=int, help="seed for initializing training. "
+    )
     parser.add_argument("--gpu", default=None, type=int, help="GPU id to use.")
     parser.add_argument("--gem-p", default=1.0, type=float)
     parser.add_argument("--gem-eval-p", default=1.0, type=float)

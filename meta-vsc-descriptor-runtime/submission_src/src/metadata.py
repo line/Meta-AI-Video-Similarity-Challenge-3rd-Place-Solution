@@ -15,6 +15,7 @@ under the License.
 """
 from dataclasses import dataclass, fields
 from typing import Optional
+
 import ffmpeg
 
 
@@ -87,5 +88,5 @@ def get_video_metadata(path: str):
             duration=float(format["duration"]),
             size=int(format["size"]),
             bit_rate=int(format["bit_rate"]),
-        )
+        ),
     )

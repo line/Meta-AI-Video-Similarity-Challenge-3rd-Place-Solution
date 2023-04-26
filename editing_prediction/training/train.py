@@ -1,6 +1,6 @@
 import argparse
-from pathlib import Path
 import shutil
+from pathlib import Path
 
 import pandas as pd
 import pytorch_lightning as pl
@@ -9,16 +9,22 @@ import torch.backends.cudnn as cudnn
 import torch.nn as nn
 from pytorch_lightning.callbacks import ModelCheckpoint
 from torchvision import transforms
+from utils.configs import timm_model_config
 from utils.dataset import VscDataModule
 from utils.model import LitModel
-from utils.configs import timm_model_config
 
 
 def train(args: argparse.Namespace):
     cudnn.benchmark = True
     pl.seed_everything(args.seed, workers=True)
 
-    labels = pd.read_csv(args.dataset_dir_path / "label.csv").sort_values("label_idx").drop_duplicates().sort_values("label_idx")["label"].tolist()
+    labels = (
+        pd.read_csv(args.dataset_dir_path / "label.csv")
+        .sort_values("label_idx")
+        .drop_duplicates()
+        .sort_values("label_idx")["label"]
+        .tolist()
+    )
 
     mean, std, input_size = timm_model_config(args.model_name)
 

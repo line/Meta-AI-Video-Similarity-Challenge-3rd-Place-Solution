@@ -13,7 +13,6 @@ def timm_model_config(model_name):
     else:
         mean = timm.get_pretrained_cfg_value(model_name, "mean")
         std = timm.get_pretrained_cfg_value(model_name, "std")
-        input_size = timm.get_pretrained_cfg_value(
-            model_name, "input_size")[1:]
+        input_size = timm.get_pretrained_cfg_value(model_name, "input_size")[1:]
 
     return mean, std, input_size

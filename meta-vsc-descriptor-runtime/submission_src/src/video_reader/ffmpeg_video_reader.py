@@ -9,16 +9,17 @@ import tempfile
 from typing import Iterable, Optional, Tuple
 
 from PIL import Image
-from torchvision.io.image import read_image, ImageReadMode
-from torchvision.datasets.folder import default_loader
-
 from src.video_reader.video_reader import VideoReader
+from torchvision.datasets.folder import default_loader
+from torchvision.io.image import ImageReadMode, read_image
 
 ImageT = Image.Image
 
 
 class FFMpegVideoReader(VideoReader):
-    def __init__(self, video_path: str, required_fps: float, output_type: str, ffmpeg_path: str):
+    def __init__(
+        self, video_path: str, required_fps: float, output_type: str, ffmpeg_path: str
+    ):
         self.ffmpeg_path = ffmpeg_path
         super().__init__(video_path, required_fps, output_type)
 
@@ -50,9 +51,9 @@ class FFMpegVideoReader(VideoReader):
                 frame_fn = os.path.join(dir, f"{i:07d}.png")
                 if not os.path.exists(frame_fn):
                     break
-                if self.output_type == 'pil':
+                if self.output_type == "pil":
                     img = default_loader(frame_fn)
-                elif self.output_type == 'tensor':
+                elif self.output_type == "tensor":
                     img = read_image(frame_fn, mode=ImageReadMode.RGB)
                 i += 1
                 yield ((i - 1) / self.original_fps, i / self.original_fps, img)

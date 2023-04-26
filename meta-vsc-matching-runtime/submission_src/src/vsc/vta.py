@@ -1,26 +1,28 @@
-import numpy as np
-import json
 import io
 import itertools
-import torch
+import json
 import time
-from loguru import logger
-
-from multiprocessing import Pool
-from typing import List, Tuple, Any, Dict
 from functools import partial
+from multiprocessing import Pool
+from typing import Any, Dict, List, Tuple
 
-from tslearn.metrics import dtw_path_from_metric
 import networkx as nx
-from networkx.algorithms.dag import dag_longest_path
+import numpy as np
+import torch
 from loguru import logger
-from numba import prange, njit
+from networkx.algorithms.dag import dag_longest_path
+from numba import njit, prange
+from tslearn.metrics import dtw_path_from_metric
 
 
 def chamfer_sim_cpu(q: np.ndarray, r: np.ndarray):
     sim = np.tensordot(q, r.T, axes=1)
-    chamfer_sim_1 = np.squeeze(np.mean(np.max(sim, axis=1, keepdims=True), axis=2, keepdims=True))
-    chamfer_sim_2 = np.squeeze(np.mean(np.max(sim, axis=2, keepdims=True), axis=1, keepdims=True))
+    chamfer_sim_1 = np.squeeze(
+        np.mean(np.max(sim, axis=1, keepdims=True), axis=2, keepdims=True)
+    )
+    chamfer_sim_2 = np.squeeze(
+        np.mean(np.max(sim, axis=2, keepdims=True), axis=1, keepdims=True)
+    )
     return (chamfer_sim_1 + chamfer_sim_2) / 2
 
 
@@ -35,7 +37,9 @@ def sim_norm(sim: np.ndarray, lower_bound=0, upper_bound=0.3):
     return np.clip(sim, lower_bound, upper_bound) / (upper_bound - lower_bound)
 
 
-def sim_map_cpu(qid, rid, q: np.ndarray, r: np.ndarray, normalize_input=False, similarity_type="cos"):
+def sim_map_cpu(
+    qid, rid, q: np.ndarray, r: np.ndarray, normalize_input=False, similarity_type="cos"
+):
     if normalize_input:
         q = q / np.linalg.norm(q, axis=1, keepdims=True)
         r = r / np.linalg.norm(r, axis=1, keepdims=True)
@@ -47,7 +51,15 @@ def sim_map_cpu(qid, rid, q: np.ndarray, r: np.ndarray, normalize_input=False, s
         raise ValueError(f"Unknown method {similarity_type}")
 
 
-def sim_map_gpu(qid, rid, q: np.ndarray, r: np.ndarray, normalize_input=False, similarity_type="cos", device=0):
+def sim_map_gpu(
+    qid,
+    rid,
+    q: np.ndarray,
+    r: np.ndarray,
+    normalize_input=False,
+    similarity_type="cos",
+    device=0,
+):
     with torch.cuda.device(device):
         q = torch.from_numpy(q).cuda()
         r = torch.from_numpy(r).cuda()
@@ -69,16 +81,27 @@ class VideoSimMapModel(object):
         self.concurrency = concurrency
         self.pool = Pool(self.concurrency)
 
-    def forward(self,
-                data: List[Tuple[str, str, np.array, np.array]],
-                use_cuda=True,
-                normalize_input=False,
-                similarity_type="cos",
-                device=0) -> List[Any]:
+    def forward(
+        self,
+        data: List[Tuple[str, str, np.array, np.array]],
+        use_cuda=True,
+        normalize_input=False,
+        similarity_type="cos",
+        device=0,
+    ) -> List[Any]:
         if use_cuda:
-            func = partial(sim_map_gpu, normalize_input=normalize_input, similarity_type=similarity_type, device=device)
+            func = partial(
+                sim_map_gpu,
+                normalize_input=normalize_input,
+                similarity_type=similarity_type,
+                device=device,
+            )
         else:
-            func = partial(sim_map_cpu, normalize_input=normalize_input, similarity_type=similarity_type)
+            func = partial(
+                sim_map_cpu,
+                normalize_input=normalize_input,
+                similarity_type=similarity_type,
+            )
 
         return self.pool.starmap(func, data)
 
@@ -117,8 +140,12 @@ def cut_path(path: np.ndarray, diagonal_thres):
     horizontal_ranges = zero_runs(np.diff(path[:, 1]))
     horizontal_ranges[:, 1] += 1
 
-    vertical_ranges = vertical_ranges[np.diff(vertical_ranges, axis=-1).squeeze(axis=-1) > diagonal_thres]
-    horizontal_ranges = horizontal_ranges[np.diff(horizontal_ranges, axis=-1).squeeze(axis=-1) > diagonal_thres]
+    vertical_ranges = vertical_ranges[
+        np.diff(vertical_ranges, axis=-1).squeeze(axis=-1) > diagonal_thres
+    ]
+    horizontal_ranges = horizontal_ranges[
+        np.diff(horizontal_ranges, axis=-1).squeeze(axis=-1) > diagonal_thres
+    ]
     discard_ranges = np.concatenate([vertical_ranges, horizontal_ranges], axis=0)
     discard_ranges = discard_ranges[discard_ranges[:, 0].argsort()]
 
@@ -126,8 +153,14 @@ def cut_path(path: np.ndarray, diagonal_thres):
     if len(endpoints) == 0:
         keep_ranges = np.array([[0, len(path)]], dtype=np.int32)
     else:
-        endpoints = endpoints[1:] if endpoints[0] == 0 else np.concatenate([[0], endpoints])
-        endpoints = endpoints[:-1] if endpoints[-1] == len(path) else np.concatenate([endpoints, [len(path)]])
+        endpoints = (
+            endpoints[1:] if endpoints[0] == 0 else np.concatenate([[0], endpoints])
+        )
+        endpoints = (
+            endpoints[:-1]
+            if endpoints[-1] == len(path)
+            else np.concatenate([endpoints, [len(path)]])
+        )
 
         keep_ranges = endpoints.reshape(-1, 2)
     return keep_ranges
@@ -140,7 +173,9 @@ def dtw(sim_matrix: np.ndarray, discontinue=3, min_sim=0.2, min_length=5, max_io
 
     # remove horizontal and vertical paths
     keep_ranges = cut_path(path, diagonal_thres=discontinue)
-    keep_ranges = keep_ranges[np.diff(keep_ranges, axis=-1).squeeze(axis=-1) > min_length]
+    keep_ranges = keep_ranges[
+        np.diff(keep_ranges, axis=-1).squeeze(axis=-1) > min_length
+    ]
 
     result_list = []
     for s, e in keep_ranges:
@@ -148,10 +183,19 @@ def dtw(sim_matrix: np.ndarray, discontinue=3, min_sim=0.2, min_length=5, max_io
         sub_path = path[s:e]
         mean_sim = np.mean(sim_matrix[sub_path[:, 0], sub_path[:, 1]])
 
-        if mean_sim > min_sim and (sub_path[-1][0] - sub_path[0][0]) > min_length and (
-                sub_path[-1][1] - sub_path[0][1]) > min_length:
+        if (
+            mean_sim > min_sim
+            and (sub_path[-1][0] - sub_path[0][0]) > min_length
+            and (sub_path[-1][1] - sub_path[0][1]) > min_length
+        ):
             result_list.append(
-                [int(sub_path[0][0]), int(sub_path[0][1]), int(sub_path[-1][0]), int(sub_path[-1][1])])
+                [
+                    int(sub_path[0][0]),
+                    int(sub_path[0][1]),
+                    int(sub_path[-1][0]),
+                    int(sub_path[-1][1]),
+                ]
+            )
 
     return result_list
 
@@ -196,13 +240,19 @@ def njit_dp_matrix(sim_mat: np.ndarray, discontinue=3, min_sim=0):
             # (i, j-1) left
             left = dp_mat[i, j - 1]
 
-            values = np.array([top_left + sim_mat[i, j], top + 0.5 * sim_mat[i, j], left + 0.5 * sim_mat[i, j]])
+            values = np.array(
+                [
+                    top_left + sim_mat[i, j],
+                    top + 0.5 * sim_mat[i, j],
+                    left + 0.5 * sim_mat[i, j],
+                ]
+            )
             max_ind = np.argmax(values)
             max_value = values[max_ind]
             prev_loc = cand_locs[max_ind]
 
             # sim value is too small
-            unmatch = (sim_mat[i, j] < min_sim)
+            unmatch = sim_mat[i, j] < min_sim
             if unmatch:
                 accu_unmatch_mat[i, j] = accu_unmatch_mat[prev_loc] + 1
 
@@ -212,12 +262,21 @@ def njit_dp_matrix(sim_mat: np.ndarray, discontinue=3, min_sim=0):
     return dp_mat, accu_unmatch_mat, back_trace_mat
 
 
-def dp(sim_matrix: np.ndarray, discontinue=3, min_sim=1, ave_sim=1.3, min_length=5, diagonal_thres=30):
+def dp(
+    sim_matrix: np.ndarray,
+    discontinue=3,
+    min_sim=1,
+    ave_sim=1.3,
+    min_length=5,
+    diagonal_thres=30,
+):
     # implemented mPDP from Pattern-Based Near-Duplicate Video Retrieval and Localization on Web-Scale Videos
     # rescale to make cosine-similarity scores non-negative
     sim_matrix += 1
 
-    dp_mat, accu_unmatch_mat, back_trace_mat = njit_dp_matrix(sim_matrix, discontinue=discontinue, min_sim=min_sim)
+    dp_mat, accu_unmatch_mat, back_trace_mat = njit_dp_matrix(
+        sim_matrix, discontinue=discontinue, min_sim=min_sim
+    )
 
     result_list = []
     cnt = 100
@@ -229,26 +288,45 @@ def dp(sim_matrix: np.ndarray, discontinue=3, min_sim=1, ave_sim=1.3, min_length
 
         r1, c1 = int(path[0][0]), int(path[0][1])
         r2, c2 = int(path[-1][0]), int(path[-1][1])
-        dp_mat[r1:r2 + 1, c1:c2 + 1] = np.NINF
+        dp_mat[r1 : r2 + 1, c1 : c2 + 1] = np.NINF
 
         keep_ranges = cut_path(path, diagonal_thres=diagonal_thres)
-        keep_ranges = keep_ranges[np.diff(keep_ranges, axis=-1).squeeze(axis=-1) > min_length]
+        keep_ranges = keep_ranges[
+            np.diff(keep_ranges, axis=-1).squeeze(axis=-1) > min_length
+        ]
         for s, e in keep_ranges:
             sub_path = path[s:e]
             mean_sim = np.mean(sim_matrix[sub_path[:, 0], sub_path[:, 1]])
 
-            if mean_sim > ave_sim and (sub_path[-1][0] - sub_path[0][0]) > min_length and (
-                    sub_path[-1][1] - sub_path[0][1]) > min_length:
+            if (
+                mean_sim > ave_sim
+                and (sub_path[-1][0] - sub_path[0][0]) > min_length
+                and (sub_path[-1][1] - sub_path[0][1]) > min_length
+            ):
                 result_list.append(
-                    [int(sub_path[0][0]), int(sub_path[0][1]), int(sub_path[-1][0]), int(sub_path[-1][1])])
+                    [
+                        int(sub_path[0][0]),
+                        int(sub_path[0][1]),
+                        int(sub_path[-1][0]),
+                        int(sub_path[-1][1]),
+                    ]
+                )
 
         cnt -= 1
 
     return result_list
 
-def tn(views: List, sims: np.ndarray,
-       tn_max_step: int = 10, tn_top_k: int = 5, max_path: int = 10,
-       min_sim: float = 0.2, min_length: int = 4, max_iou: float = 0.3) -> List[List[int]]:
+
+def tn(
+    views: List,
+    sims: np.ndarray,
+    tn_max_step: int = 10,
+    tn_top_k: int = 5,
+    max_path: int = 10,
+    min_sim: float = 0.2,
+    min_length: int = 4,
+    max_iou: float = 0.3,
+) -> List[List[int]]:
     """
     TN method for video temporal alignment.
     Reimplemented paper:
@@ -307,7 +385,12 @@ def tn(views: List, sims: np.ndarray,
 
         intermediate_rs = np.empty((0,), dtype=np.int32)
         # implements Constraints C1 by limiting range end
-        qj_range = [i for i in range(q_i + 1, min((q_i // q_frame + 1) * q_frame, q_i + tn_max_step))]
+        qj_range = [
+            i
+            for i in range(
+                q_i + 1, min((q_i // q_frame + 1) * q_frame, q_i + tn_max_step)
+            )
+        ]
         for q_j in qj_range:
             r_j = topk_indices[q_j]  # shape (top_k, )
             r_diff = r_j[:, None] - r_i  # dst - src, shape (top_k, top_k)
@@ -317,7 +400,9 @@ def tn(views: List, sims: np.ndarray,
 
             # Constraints C4
             s_j = topk_sims[q_j]  # shape (top_k, )
-            s_j = np.repeat(s_j.reshape(-1, 1), r_diff.shape[1], axis=1)  # shape (top_k, top_k)
+            s_j = np.repeat(
+                s_j.reshape(-1, 1), r_diff.shape[1], axis=1
+            )  # shape (top_k, top_k)
             C4 = s_j >= min_sim
 
             # val_rows, val_cols = np.where(C2 & C3 & C4)
@@ -327,8 +412,14 @@ def tn(views: List, sims: np.ndarray,
             valid_r_j = r_j[val_rows]
             intermediate_rs = np.unique(np.concatenate([intermediate_rs, valid_r_j]))
 
-            edges = [(node_pair2id[(q_i, r_i[c])], node_pair2id[(q_j, r_j[r])], dict(weight=s))
-                     for c, r, s in zip(val_cols, val_rows, val_sims)]
+            edges = [
+                (
+                    node_pair2id[(q_i, r_i[c])],
+                    node_pair2id[(q_j, r_j[r])],
+                    dict(weight=s),
+                )
+                for c, r, s in zip(val_cols, val_rows, val_sims)
+            ]
 
             DG.add_edges_from(edges)
 
@@ -340,12 +431,16 @@ def tn(views: List, sims: np.ndarray,
 
         pair_i = node_id2pair[i]
         pair_j = node_id2pair[j]
-        
+
         if i == 0:
             DG.add_edge(i, j, weight=0)
         else:
-            if (pair_j[0] % q_frame > pair_i[0] % q_frame and pair_j[1] % r_frame > pair_i[1] % r_frame and
-                    pair_j[0] - pair_i[0] <= tn_max_step and pair_j[1] - pair_i[1] <= tn_max_step):
+            if (
+                pair_j[0] % q_frame > pair_i[0] % q_frame
+                and pair_j[1] % r_frame > pair_i[1] % r_frame
+                and pair_j[0] - pair_i[0] <= tn_max_step
+                and pair_j[1] - pair_i[1] <= tn_max_step
+            ):
                 DG.add_edge(i, j, weight=0)
 
     while True:
@@ -360,7 +455,7 @@ def tn(views: List, sims: np.ndarray,
             longest_path.remove(node_num - 1)  # remove sink node
         path_query = [node_id2pair[node_id][0] for node_id in longest_path]
         path_refer = [node_id2pair[node_id][1] for node_id in longest_path]
-        
+
         if len(path_query) == 0:
             break
         score = 0.0
@@ -373,22 +468,41 @@ def tn(views: List, sims: np.ndarray,
             query_min, query_max = 0, 0
             refer_min, refer_max = 0, 0
         ave_length = (refer_max - refer_min + query_max - query_min) / 2
-        ious = iou(np.expand_dims(np.array([query_min, refer_min, query_max, refer_max]), axis=0),
-                   np.array(infringe_box_list))
-        if ave_length != 0 and score / ave_length > min_sim and min(refer_max - refer_min,
-                                                query_max - query_min) > min_length and ious.max() < max_iou:        
-            infringe_box_list.append([int(query_min), int(refer_min), int(query_max), int(refer_max)])
-            infringe_box_score_list.append([int(query_min), int(refer_min), int(query_max), int(refer_max), score / ave_length])
+        ious = iou(
+            np.expand_dims(
+                np.array([query_min, refer_min, query_max, refer_max]), axis=0
+            ),
+            np.array(infringe_box_list),
+        )
+        if (
+            ave_length != 0
+            and score / ave_length > min_sim
+            and min(refer_max - refer_min, query_max - query_min) > min_length
+            and ious.max() < max_iou
+        ):
+            infringe_box_list.append(
+                [int(query_min), int(refer_min), int(query_max), int(refer_max)]
+            )
+            infringe_box_score_list.append(
+                [
+                    int(query_min),
+                    int(refer_min),
+                    int(query_max),
+                    int(refer_max),
+                    score / ave_length,
+                ]
+            )
         path += 1
     return infringe_box_score_list
 
-def hv(sims: np.ndarray,
-       iou_thresh=0.9,
-       min_sim=0.2, max_peaks=100):
-    infringe_box_list = []  ## box_type = [int(query_min), int(refer_min), int(query_max), int(refer_max)]
+
+def hv(sims: np.ndarray, iou_thresh=0.9, min_sim=0.2, max_peaks=100):
+    infringe_box_list = (
+        []
+    )  ## box_type = [int(query_min), int(refer_min), int(query_max), int(refer_max)]
 
     ## step1: remove all pairs lower than min_sim
-    sims[sims < min_sim] = 0.
+    sims[sims < min_sim] = 0.0
 
     ## step2: calculate the time_bins histogram
     query_inds, refer_inds = np.where(sims >= min_sim)
@@ -398,19 +512,23 @@ def hv(sims: np.ndarray,
         sigma = sigma_inds[s_i]
         if sigma not in sigma_hists:
             sigma_hists[sigma] = dict()
-            sigma_hists[sigma]['score'] = 0.
-            sigma_hists[sigma]['matches'] = list()
+            sigma_hists[sigma]["score"] = 0.0
+            sigma_hists[sigma]["matches"] = list()
         start_idx = -sigma if sigma < 0 else 0
         end_idx = sims.shape[1] - sigma  # if sigma>0 else sims.shape[1] - sigma
         end_idx = min(max(end_idx, 0), sims.shape[0])
         query_idx = range(start_idx, end_idx)
         refer_idx = range(start_idx + sigma, end_idx + sigma)
         sub_sims = sims[query_idx, refer_idx]
-        sigma_hists[sigma]['score'] = float(np.sum(sub_sims))
-        sigma_hists[sigma]['matches'] = [[query_idx[x], refer_idx[x], sub_sims[x]] for x in range(len(query_idx))]
+        sigma_hists[sigma]["score"] = float(np.sum(sub_sims))
+        sigma_hists[sigma]["matches"] = [
+            [query_idx[x], refer_idx[x], sub_sims[x]] for x in range(len(query_idx))
+        ]
 
     ## step3: refine the final matches
-    sorted_sigma_hists = sorted(sigma_hists.items(), key=lambda x: x[1]['score'], reverse=True)
+    sorted_sigma_hists = sorted(
+        sigma_hists.items(), key=lambda x: x[1]["score"], reverse=True
+    )
     del sigma_hists
     sorted_sigma_hists = sorted_sigma_hists[:max_peaks]
     """
@@ -429,8 +547,9 @@ def hv(sims: np.ndarray,
     """
     ## step4: output the final infringe_box_list
     for sigma, sum in sorted_sigma_hists:
-        if sum['score'] <= 0.: continue
-        matches = sum['matches']
+        if sum["score"] <= 0.0:
+            continue
+        matches = sum["matches"]
         query_ids = [x[0] for x in matches]
         refer_ids = [x[1] for x in matches]
         query_min = min(query_ids)
@@ -439,8 +558,12 @@ def hv(sims: np.ndarray,
         refer_max = max(refer_ids)
         cur_box = [int(query_min), int(refer_min), int(query_max), int(refer_max)]
         ## === add nms
-        ious = iou(np.expand_dims(cur_box, axis=0), np.array(infringe_box_list, dtype=np.float32))
-        if np.any(ious > iou_thresh): continue
+        ious = iou(
+            np.expand_dims(cur_box, axis=0),
+            np.array(infringe_box_list, dtype=np.float32),
+        )
+        if np.any(ious > iou_thresh):
+            continue
         infringe_box_list.append(cur_box)
     return infringe_box_list
 
@@ -471,35 +594,46 @@ class BaseVtaModel(object):
 
 
 class DtwModel(BaseVtaModel):
-    def __init__(self,
-                 concurrency=4,
-                 version="v1",
-                 discontinue=3,
-                 min_sim=0.2,
-                 min_length=5,
-                 max_iou=0.3,
-                 **kwargs,
-        ):
+    def __init__(
+        self,
+        concurrency=4,
+        version="v1",
+        discontinue=3,
+        min_sim=0.2,
+        min_length=5,
+        max_iou=0.3,
+        **kwargs,
+    ):
         self.min_length = min_length
         self.min_sim = min_sim
         self.max_iou = max_iou
         self.discontinue = discontinue
         self.version = version
-        func = partial(dtw,
-                       discontinue=self.discontinue,
-                       min_sim=self.min_sim,
-                       min_length=self.min_length,
-                       max_iou=self.max_iou)
+        func = partial(
+            dtw,
+            discontinue=self.discontinue,
+            min_sim=self.min_sim,
+            min_length=self.min_length,
+            max_iou=self.max_iou,
+        )
 
         super(DtwModel, self).__init__(concurrency=concurrency, func_to_run=func)
 
 
 class DpVtaModel(BaseVtaModel):
-    def __init__(self,
-                 concurrency=4,
-                 version="v1",
-                 discontinue=3,
-                 min_sim=0., min_length=5, max_iou=0.3, sum_sim=8, ave_sim=0.3, diagonal_thres=10, **kwargs):
+    def __init__(
+        self,
+        concurrency=4,
+        version="v1",
+        discontinue=3,
+        min_sim=0.0,
+        min_length=5,
+        max_iou=0.3,
+        sum_sim=8,
+        ave_sim=0.3,
+        diagonal_thres=10,
+        **kwargs,
+    ):
         self.min_sim = min_sim
         self.min_length = min_length
         self.max_iou = max_iou
@@ -509,20 +643,31 @@ class DpVtaModel(BaseVtaModel):
         self.diagonal_thres = diagonal_thres
         self.version = version
 
-        func = partial(dp,
-                       discontinue=self.discontinue,
-                       min_sim=self.min_sim, min_length=self.min_length,
-                       ave_sim=self.ave_sim, diagonal_thres=self.diagonal_thres)
+        func = partial(
+            dp,
+            discontinue=self.discontinue,
+            min_sim=self.min_sim,
+            min_length=self.min_length,
+            ave_sim=self.ave_sim,
+            diagonal_thres=self.diagonal_thres,
+        )
 
         super(DpVtaModel, self).__init__(concurrency=concurrency, func_to_run=func)
 
 
 class TnVtaModel(BaseVtaModel):
-    def __init__(self,
-                 concurrency=4,
-                 version="v1",
-                 tn_max_step=10, tn_top_k=5, max_path=10,
-                 min_sim=0.2, min_length=5, max_iou=0.3, **kwargs):
+    def __init__(
+        self,
+        concurrency=4,
+        version="v1",
+        tn_max_step=10,
+        tn_top_k=5,
+        max_path=10,
+        min_sim=0.2,
+        min_length=5,
+        max_iou=0.3,
+        **kwargs,
+    ):
         self.tn_max_step = tn_max_step
         self.tn_top_k = tn_top_k
         self.max_path = max_path
@@ -533,18 +678,30 @@ class TnVtaModel(BaseVtaModel):
 
         self.version = version
 
-        func = partial(tn,
-                       tn_max_step=self.tn_max_step, tn_top_k=self.tn_top_k, max_path=self.max_path,
-                       min_sim=self.min_sim, min_length=self.min_length, max_iou=self.max_iou)
+        func = partial(
+            tn,
+            tn_max_step=self.tn_max_step,
+            tn_top_k=self.tn_top_k,
+            max_path=self.max_path,
+            min_sim=self.min_sim,
+            min_length=self.min_length,
+            max_iou=self.max_iou,
+        )
         super(TnVtaModel, self).__init__(concurrency=concurrency, func_to_run=func)
 
 
 class HvVtaModel(BaseVtaModel):
-    def __init__(self,
-                 concurrency=4,
-                 version="v1",
-                 iou_thresh=0.9,
-                 min_sim=0.0, min_bins=1, max_peaks=100, min_peaks=10, **kwargs):
+    def __init__(
+        self,
+        concurrency=4,
+        version="v1",
+        iou_thresh=0.9,
+        min_sim=0.0,
+        min_bins=1,
+        max_peaks=100,
+        min_peaks=10,
+        **kwargs,
+    ):
         self.min_sim = min_sim
         self.min_bins = min_bins
         self.max_peaks = max_peaks
@@ -552,22 +709,24 @@ class HvVtaModel(BaseVtaModel):
         self.iou_thresh = iou_thresh
         self.version = version
 
-        func = partial(hv,
-                       iou_thresh=self.iou_thresh,
-                       min_sim=self.min_sim,
-                       max_peaks=self.max_peaks)
+        func = partial(
+            hv,
+            iou_thresh=self.iou_thresh,
+            min_sim=self.min_sim,
+            max_peaks=self.max_peaks,
+        )
 
         super(HvVtaModel, self).__init__(concurrency=concurrency, func_to_run=func)
 
 
 def build_vta_model(method="DTW", concurrency=4, **config) -> BaseVtaModel:
-    if method == 'DTW':
+    if method == "DTW":
         return DtwModel(concurrency=concurrency, version="v1", **config)
-    elif method == 'TN':
+    elif method == "TN":
         return TnVtaModel(concurrency=concurrency, version="v1", **config)
-    elif method == 'DP':
+    elif method == "DP":
         return DpVtaModel(concurrency=concurrency, version="v1", **config)
-    elif method == 'HV':
+    elif method == "HV":
         return HvVtaModel(concurrency=concurrency, version="v1", **config)
     else:
         raise ValueError(f"Unknown method {method}")

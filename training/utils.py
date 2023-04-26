@@ -14,17 +14,16 @@ License for the specific language governing permissions and limitations
 under the License.
 """
 from __future__ import annotations
-import collections
 
+import collections
 import dataclasses
 import json
 import math
 import pickle
 import random
 import shutil
-from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import Any, Dict, List, Optional, TextIO, Tuple, Collection, Union
+from typing import Any, Collection, Dict, List, Optional, TextIO, Tuple, Union
 from weakref import proxy
 
 import decord
@@ -34,24 +33,24 @@ import pandas as pd
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torchvision
-from torch.nn import Parameter
-from augly.image.functional import overlay_image, overlay_text
+from augly.image.functional import overlay_text
 from augly.image.transforms import BaseTransform
 from augly.utils.base_paths import MODULE_BASE_DIR
 from augly.utils.constants import FONT_LIST_PATH, FONTS_DIR
+from loguru import logger
 from PIL import Image, ImageFilter
-from pytorch_lightning.callbacks import ModelCheckpoint, BasePredictionWriter
-from sklearn.preprocessing import normalize
+from pytorch_lightning.callbacks import BasePredictionWriter, ModelCheckpoint
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader
-from loguru import logger
-
-from vsc.baseline.score_normalization import transform_features
-from vsc.candidates import CandidateGeneration, MaxScoreAggregation, ScoreAggregation
+from vsc.candidates import ScoreAggregation
 from vsc.index import PairMatches, VideoFeature, VideoIndex
-from vsc.metrics import CandidatePair, Dataset, Match, average_precision, format_video_id
+from vsc.metrics import (
+    CandidatePair,
+    Dataset,
+    Match,
+    format_video_id,
+)
 
 
 class NCropsTransform:
@@ -63,7 +62,9 @@ class NCropsTransform:
         self.ncrops = ncrops
 
     def __call__(self, x):
-        return [self.aug_moderate(x)] + [self.aug_hard(x) for _ in range(self.ncrops - 1)]
+        return [self.aug_moderate(x)] + [
+            self.aug_hard(x) for _ in range(self.ncrops - 1)
+        ]
 
 
 class RandomOverlayText(BaseTransform):
@@ -81,7 +82,9 @@ class RandomOverlayText(BaseTransform):
                 "TypeMyMusic",
                 "PainttheSky-Regular",
             ]
-            self.font_list = [f for f in font_list if all(_ not in f for _ in blacklist)]
+            self.font_list = [
+                f for f in font_list if all(_ not in f for _ in blacklist)
+            ]
 
         self.font_lens = []
         for ff in self.font_list:
@@ -227,7 +230,7 @@ class VSCLitDataModule(pl.LightningDataModule):
         train_batch_size: int = 8,
         val_batch_size: int = 16,
         workers: int = 4,
-        collate_fn = None,
+        collate_fn=None,
     ):
         super().__init__()
         self.train_datasets = train_datasets
@@ -318,16 +321,20 @@ class CustomWriter(BasePredictionWriter):
     def write_on_epoch_end(self, trainer, pl_module, predictions, batch_indices):
         # this will create N (num processes) files in `output_dir` each containing
         # the predictions of it's respective rank
-        torch.save(predictions, self.output_dir / f"predictions_{trainer.global_rank}.pth")
+        torch.save(
+            predictions, self.output_dir / f"predictions_{trainer.global_rank}.pth"
+        )
 
         # optionally, you can also save `batch_indices` to get the information about the data index
         # from your prediction data
-        torch.save(batch_indices, self.output_dir / f"batch_indices_{trainer.global_rank}.pth")
+        torch.save(
+            batch_indices, self.output_dir / f"batch_indices_{trainer.global_rank}.pth"
+        )
 
 
 def decord_clip_reader(
     path: Path | str,
-    start: float = 0.,
+    start: float = 0.0,
     duration: float | None = None,
     count: int | None = None,
     fps: float | None = None,
@@ -388,14 +395,24 @@ def decord_clip_reader(
 
 
 class CustomNormalize(nn.Module):
-    def __init__(self, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), format="TCHW"):
+    def __init__(
+        self, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), format="TCHW"
+    ):
         super().__init__()
         if format == "TCHW":
-            self.mean = torch.nn.Parameter(torch.tensor(mean).reshape(1, 3, 1, 1), requires_grad=False)
-            self.std = torch.nn.Parameter(torch.tensor(std).reshape(1, 3, 1, 1), requires_grad=False)
+            self.mean = torch.nn.Parameter(
+                torch.tensor(mean).reshape(1, 3, 1, 1), requires_grad=False
+            )
+            self.std = torch.nn.Parameter(
+                torch.tensor(std).reshape(1, 3, 1, 1), requires_grad=False
+            )
         elif format == "CTHW":
-            self.mean = torch.nn.Parameter(torch.tensor(mean).reshape(3, 1, 1, 1), requires_grad=False)
-            self.std = torch.nn.Parameter(torch.tensor(std).reshape(3, 1, 1, 1), requires_grad=False)
+            self.mean = torch.nn.Parameter(
+                torch.tensor(mean).reshape(3, 1, 1, 1), requires_grad=False
+            )
+            self.std = torch.nn.Parameter(
+                torch.tensor(std).reshape(3, 1, 1, 1), requires_grad=False
+            )
         else:
             raise ValueError(f"Unknown format: {format}")
 
@@ -437,8 +454,12 @@ class CustomCandidatePair(CandidatePair):
         rows = []
         for c in candidates:
             row = {
-                "query_id": format_video_id(c.query_id, Dataset.QUERIES) if do_format_video_id else c.query_id,
-                "ref_id": format_video_id(c.ref_id, Dataset.REFS) if do_format_video_id else c.ref_id,
+                "query_id": format_video_id(c.query_id, Dataset.QUERIES)
+                if do_format_video_id
+                else c.query_id,
+                "ref_id": format_video_id(c.ref_id, Dataset.REFS)
+                if do_format_video_id
+                else c.ref_id,
                 "score": c.score,
             }
             if c.query_max_idx is not None:
@@ -450,18 +471,31 @@ class CustomCandidatePair(CandidatePair):
 
     @classmethod
     def write_csv(
-        cls, candidates: Collection["CustomCandidatePair"], file: Union[str, TextIO], do_format_video_id: bool = True,
+        cls,
+        candidates: Collection["CustomCandidatePair"],
+        file: Union[str, TextIO],
+        do_format_video_id: bool = True,
     ):
         df = cls.to_dataframe(candidates, do_format_video_id)
         df.to_csv(file, index=False)
 
     @classmethod
-    def read_csv(cls, file: Union[str, TextIO], do_format_video_id: bool = True) -> List["CustomCandidatePair"]:
+    def read_csv(
+        cls, file: Union[str, TextIO], do_format_video_id: bool = True
+    ) -> List["CustomCandidatePair"]:
         df = pd.read_csv(file)
         pairs = []
         for _, row in df.iterrows():
-            query_id = format_video_id(row.query_id, Dataset.QUERIES) if do_format_video_id else row.query_id
-            ref_id = format_video_id(row.ref_id, Dataset.REFS) if do_format_video_id else row.ref_id
+            query_id = (
+                format_video_id(row.query_id, Dataset.QUERIES)
+                if do_format_video_id
+                else row.query_id
+            )
+            ref_id = (
+                format_video_id(row.ref_id, Dataset.REFS)
+                if do_format_video_id
+                else row.ref_id
+            )
             pairs.append(
                 CustomCandidatePair(query_id=query_id, ref_id=ref_id, score=row.score)
             )
@@ -483,13 +517,20 @@ class MaxScoreAggregationWithTimestamp(ScoreAggregation):
     def aggregate(self, match: PairMatches) -> float:
         scores = [m.score for m in match.matches]
         argmax = np.argmax(scores)
-        return match.matches[argmax].score, match.matches[argmax].query_timestamps, match.matches[argmax].ref_timestamps
+        return (
+            match.matches[argmax].score,
+            match.matches[argmax].query_timestamps,
+            match.matches[argmax].ref_timestamps,
+        )
 
     def score(self, match: PairMatches) -> CustomCandidatePair:
         score, query_max_idx, ref_max_idx = self.aggregate(match)
         return CustomCandidatePair(
-            query_id=match.query_id, ref_id=match.ref_id, score=score,
-            query_max_idx=query_max_idx[0], ref_max_idx=ref_max_idx[0],
+            query_id=match.query_id,
+            ref_id=match.ref_id,
+            score=score,
+            query_max_idx=query_max_idx[0],
+            ref_max_idx=ref_max_idx[0],
         )
 
 
@@ -500,7 +541,9 @@ class CustomCandidateGeneration:
         self.index = CustomVideoIndex(dim)
         self.index.add(references)
 
-    def query(self, queries: list[VideoFeature], global_k: int) -> list[CustomCandidatePair]:
+    def query(
+        self, queries: list[VideoFeature], global_k: int
+    ) -> list[CustomCandidatePair]:
         matches = self.index.search(queries, global_k=global_k)
         candidates = [self.aggregation.score(match) for match in matches]
         candidates = sorted(candidates, key=lambda match: match.score, reverse=True)
@@ -530,10 +573,10 @@ class TTA30ViewsTransform(nn.Module):
     def forward(self, x) -> torch.Tensor:
         *_, h, w = x.shape
 
-        x_top = x[..., :h // 2, :]  # top
-        x_bottom = x[..., h // 2:, :]  # bottom
-        x_left = x[..., :, :w // 2]  # left
-        x_right = x[..., :, w // 2:]  # right
+        x_top = x[..., : h // 2, :]  # top
+        x_bottom = x[..., h // 2 :, :]  # bottom
+        x_left = x[..., :, : w // 2]  # left
+        x_right = x[..., :, w // 2 :]  # right
 
         if self.base_transforms is not None:
             x = self.base_transforms(x)
@@ -587,10 +630,10 @@ class TTA24ViewsTransform(nn.Module):
     def forward(self, x) -> torch.Tensor:
         *_, h, w = x.shape
 
-        x_top_left = x[..., :h // 2, :w // 2]  # top_left
-        x_top_right = x[..., :h // 2, w // 2:]  # top_right
-        x_bottom_left = x[..., h // 2:, :w // 2]  # bottom_left
-        x_bottom_right = x[..., h // 2:, w // 2:]  # bottom_right
+        x_top_left = x[..., : h // 2, : w // 2]  # top_left
+        x_top_right = x[..., : h // 2, w // 2 :]  # top_right
+        x_bottom_left = x[..., h // 2 :, : w // 2]  # bottom_left
+        x_bottom_right = x[..., h // 2 :, w // 2 :]  # bottom_right
 
         if self.base_transforms is not None:
             x_top_left = self.base_transforms(x_top_left)

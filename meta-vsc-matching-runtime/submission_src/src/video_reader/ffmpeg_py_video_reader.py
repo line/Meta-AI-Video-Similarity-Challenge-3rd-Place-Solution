@@ -4,14 +4,13 @@
 # LICENSE file in the root directory of this source tree.
 
 
-from typing import Iterable, Optional, Tuple
 import warnings
+from typing import Iterable, Optional, Tuple
 
-from PIL import Image
 import ffmpeg
 import numpy as np
 import torch
-
+from PIL import Image
 from src.video_reader.video_reader import VideoReader
 
 ImageT = Image.Image
@@ -36,16 +35,22 @@ class FFMpegPyVideoReader(VideoReader):
         meta = ffmpeg.probe(self.video_path)["streams"][0]
         width, height = meta["width"], meta["height"]
 
-        if self.output_type == 'pil':
+        if self.output_type == "pil":
             frames = np.frombuffer(buffer, dtype=np.uint8).reshape(-1, height, width, 3)
             for i, frame in enumerate(frames):
                 img = Image.fromarray(frame).convert("RGB")
-                yield i / self.original_fps, (i+1) / self.original_fps, img
+                yield i / self.original_fps, (i + 1) / self.original_fps, img
 
-        elif self.output_type == 'tensor':
+        elif self.output_type == "tensor":
             with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", message="The given buffer is not writable")
-                frames = torch.frombuffer(buffer, dtype=torch.uint8).reshape((-1, height, width, 3)).permute(0, 3, 1, 2)
+                warnings.filterwarnings(
+                    "ignore", message="The given buffer is not writable"
+                )
+                frames = (
+                    torch.frombuffer(buffer, dtype=torch.uint8)
+                    .reshape((-1, height, width, 3))
+                    .permute(0, 3, 1, 2)
+                )
 
             for i, frame in enumerate(frames):
-                yield i / self.original_fps, (i+1) / self.original_fps, frame
+                yield i / self.original_fps, (i + 1) / self.original_fps, frame

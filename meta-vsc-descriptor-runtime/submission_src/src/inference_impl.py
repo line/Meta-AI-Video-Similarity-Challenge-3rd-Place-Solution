@@ -9,30 +9,38 @@ import logging
 import os
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
-import faiss
 
+import faiss
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn as nn
 import tqdm
+from src.inference import Accelerator, VideoReaderType
+from src.metadata import FFProbeMetadata, get_video_metadata
+from src.model import create_copy_type_pred_model, create_model_in_runtime
+from src.postproc import sliding_pca
+from src.score_normalization import score_normalize
+from src.tta import (
+    TTA4ViewsTransform,
+    TTA5ViewsTransform,
+    TTAHorizontalStackTransform,
+    TTAVerticalStackTransform,
+)
+from src.video_reader.ffmpeg_py_video_reader import FFMpegPyVideoReader
+from src.video_reader.ffmpeg_video_reader import FFMpegVideoReader
+from src.vsc.candidates import CandidateGeneration, MaxScoreAggregation
+from src.vsc.index import VideoFeature
+from src.vsc.metrics import (
+    CandidatePair,
+    Match,
+    average_precision,
+    evaluate_matching_track,
+)
+from src.vsc.storage import load_features, store_features
 from torch.utils.data import DataLoader, IterableDataset
 from torch.utils.data._utils.collate import default_collate
 from torchvision import transforms
-from src.inference import Accelerator, VideoReaderType
-from src.video_reader.ffmpeg_video_reader import FFMpegVideoReader
-from src.video_reader.ffmpeg_py_video_reader import FFMpegPyVideoReader
-from src.vsc.index import VideoFeature
-from src.vsc.storage import load_features, store_features
-from src.vsc.candidates import CandidateGeneration, MaxScoreAggregation
-from src.score_normalization import score_normalize
-from src.vsc.metrics import CandidatePair, Match, average_precision, evaluate_matching_track
-
-import torch.nn as nn
-from src.model import create_model_in_runtime, create_copy_type_pred_model
-from src.metadata import FFProbeMetadata, get_video_metadata
-from src.tta import TTA4ViewsTransform, TTA5ViewsTransform, TTAHorizontalStackTransform, TTAVerticalStackTransform
-from src.postproc import sliding_pca
-
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)-8s %(message)s",
@@ -74,18 +82,25 @@ class VideoDataset(IterableDataset):
             filenames = glob.glob(os.path.join(path, "*.*"))
             filenames = (fn for fn in filenames if fn.rsplit(".", 1)[-1] in extensions)
 
-        filenames = [name for name in filenames if Path(name).stem not in ['R102796', 'R133364']]
+        filenames = [
+            name for name in filenames if Path(name).stem not in ["R102796", "R133364"]
+        ]
 
         if filter_by_asr:
-            self.metadatas = {Path(path).stem: get_video_metadata(path) for path in filenames}
+            self.metadatas = {
+                Path(path).stem: get_video_metadata(path) for path in filenames
+            }
             filtered_filenames = [
-                path for path in filenames if self.metadatas[Path(path).stem].stream.sample_aspect_ratio is not None
+                path
+                for path in filenames
+                if self.metadatas[Path(path).stem].stream.sample_aspect_ratio
+                is not None
             ]
         else:
             self.metadatas = None
             filtered_filenames = filenames
         self.videos = sorted(filtered_filenames)
-        print(f'filtered: #{len(filenames)} -> #{len(self.videos)}')
+        print(f"filtered: #{len(filenames)} -> #{len(self.videos)}")
 
         if not self.videos:
             raise Exception("No videos found!")
@@ -118,14 +133,21 @@ class VideoDataset(IterableDataset):
         name = os.path.basename(video_name).split(".")[0]
         if self.video_reader == VideoReaderType.FFMPEG:
             reader = FFMpegVideoReader(
-                video_path=video, required_fps=self.fps,
-                output_type=self.read_type, ffmpeg_path=self.ffmpeg_path,
+                video_path=video,
+                required_fps=self.fps,
+                output_type=self.read_type,
+                ffmpeg_path=self.ffmpeg_path,
             )
         elif self.video_reader == VideoReaderType.FFMPEGPY:
-            reader = FFMpegPyVideoReader(video_path=video, required_fps=self.fps, output_type=self.read_type)
+            reader = FFMpegPyVideoReader(
+                video_path=video, required_fps=self.fps, output_type=self.read_type
+            )
         elif self.video_reader == VideoReaderType.DECORD:
             from src.video_reader.decord_video_reader import DecordVideoReader
-            reader = DecordVideoReader(video_path=video, required_fps=self.fps, output_type=self.read_type)
+
+            reader = DecordVideoReader(
+                video_path=video, required_fps=self.fps, output_type=self.read_type
+            )
         else:
             raise ValueError(f"VideoReaderType: {self.video_reader} not supported")
         for start_timestamp, end_timestamp, frame in reader.frames():
@@ -228,7 +250,7 @@ def worker_process(args, rank, world_size, output_filename):
 
     if args.score_norm_features:
         stride = args.stride if args.stride is not None else args.fps
-        print('stride', stride, args.stride, args.fps)
+        print("stride", stride, args.stride, args.fps)
         pca_matrix = faiss.read_VectorTransform(args.pca_matrix)
         queries = sliding_pca(queries=queries, mat=pca_matrix, stride=stride)
 
@@ -244,7 +266,9 @@ def worker_process(args, rank, world_size, output_filename):
     )
 
 
-def video_level_loader(frame_level_dataloader: DataLoader) -> Iterable[Tuple[str, torch.Tensor, torch.Tensor]]:
+def video_level_loader(
+    frame_level_dataloader: DataLoader,
+) -> Iterable[Tuple[str, torch.Tensor, torch.Tensor]]:
     name, imgs, timestamps = None, [], []
 
     for frames in frame_level_dataloader:
@@ -264,13 +288,15 @@ def video_level_loader(frame_level_dataloader: DataLoader) -> Iterable[Tuple[str
     yield name, torch.concat(imgs), torch.concat(timestamps)
 
 
-def batch_forward(model: nn.Module, inputs: torch.Tensor, batch_size: int, transforms=None) -> torch.Tensor:
+def batch_forward(
+    model: nn.Module, inputs: torch.Tensor, batch_size: int, transforms=None
+) -> torch.Tensor:
     device = next(model.parameters()).device
     dtype = next(model.parameters()).dtype
 
     outputs = []
     for i in range(0, len(inputs), batch_size):
-        x = inputs[i: i+batch_size]
+        x = inputs[i : i + batch_size]
 
         if transforms is not None:
             x = transforms(x)
@@ -296,7 +322,9 @@ def batch_forward(model: nn.Module, inputs: torch.Tensor, batch_size: int, trans
 
 
 @torch.no_grad()
-def run_inference(dataloader, model, transforms=None, tta=True, copytype_model=None, batch_size=32) -> Iterable[VideoFeature]:
+def run_inference(
+    dataloader, model, transforms=None, tta=True, copytype_model=None, batch_size=32
+) -> Iterable[VideoFeature]:
     for name, imgs, timestamps in video_level_loader(dataloader):
         n_imgs = len(imgs)
 
@@ -307,13 +335,17 @@ def run_inference(dataloader, model, transforms=None, tta=True, copytype_model=N
             metadatas = dataloader.dataset.metadatas
 
             # Judge by metadata (hstack + vstack)
-            if metadatas[name].stream.time_base == '1/10240':
+            if metadatas[name].stream.time_base == "1/10240":
                 _transforms = TTA4ViewsTransform(_transforms)
             # Judge by copytype pred model
             elif copytype_model is not None:
                 pred = batch_forward(copytype_model, imgs, batch_size=batch_size)
-                assert len(pred["hstack"]) == len(imgs), f"{len(pred['hstack'])=} != {len(imgs)=}"
-                assert len(pred["vstack"]) == len(imgs), f"{len(pred['vstack'])=} != {len(imgs)=}"
+                assert len(pred["hstack"]) == len(
+                    imgs
+                ), f"{len(pred['hstack'])=} != {len(imgs)=}"
+                assert len(pred["vstack"]) == len(
+                    imgs
+                ), f"{len(pred['vstack'])=} != {len(imgs)=}"
 
                 hstack_prob = torch.median(pred["hstack"])
                 vstack_prob = torch.median(pred["vstack"])
@@ -356,25 +388,25 @@ def merge_feature_files(filenames: List[str], output_filename: str) -> int:
     return len(features)
 
 
-def validate_total_descriptors(video_features: List[VideoFeature], meta: Optional[pd.DataFrame] = None):
+def validate_total_descriptors(
+    video_features: List[VideoFeature], meta: Optional[pd.DataFrame] = None
+):
     _ids = [_.video_id for _ in video_features]
     n_features = sum([_.feature.shape[0] for _ in video_features])
 
     if meta is None:
-        meta_root = Path('./metadata_root')
+        meta_root = Path("./metadata_root")
         meta_paths = [
-            meta_root / 'train' / 'train_query_metadata.csv',
-            meta_root / 'train' / 'train_reference_metadata.csv',
-            meta_root / 'test' / 'test_query_metadata.csv',
-            meta_root / 'test' / 'test_reference_metadata.csv',
+            meta_root / "train" / "train_query_metadata.csv",
+            meta_root / "train" / "train_reference_metadata.csv",
+            meta_root / "test" / "test_query_metadata.csv",
+            meta_root / "test" / "test_reference_metadata.csv",
         ]
         meta = pd.concat([pd.read_csv(path) for path in meta_paths])
 
     meta = meta.set_index("video_id").loc[_ids]
     total_seconds = meta.duration_sec.apply(np.ceil).sum()
 
-    logger.info(
-        f"Saw {n_features} vectors, max allowed is {total_seconds}"
-    )
+    logger.info(f"Saw {n_features} vectors, max allowed is {total_seconds}")
     if n_features > total_seconds:
         logger.info("*Warning*: Too many vectors")

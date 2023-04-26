@@ -9,35 +9,43 @@ import logging
 import os
 from pathlib import Path
 from typing import Iterable, List, Tuple
-import faiss
 
+import faiss
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn as nn
 import tqdm
+from src.inference import Accelerator, VideoReaderType
+from src.metadata import FFProbeMetadata, get_video_metadata
+from src.model import create_model_in_runtime, create_model_in_runtime_2
+from src.postproc import sliding_pca
+from src.score_normalization import score_normalize
+from src.tta import (
+    TTA4ViewsTransform,
+    TTA5ViewsTransform,
+    TTA24ViewsTransform,
+    TTA30ViewsTransform,
+)
+from src.video_reader.ffmpeg_py_video_reader import FFMpegPyVideoReader
+from src.video_reader.ffmpeg_video_reader import FFMpegVideoReader
+from src.vsc.candidates import CandidateGeneration, MaxScoreAggregation
+from src.vsc.index import VideoFeature
+from src.vsc.localization import (
+    VCSLLocalizationCandidateScore,
+    VCSLLocalizationMatchScore,
+    VCSLLocalizationMaxSim,
+)
+from src.vsc.metrics import (
+    CandidatePair,
+    Match,
+    average_precision,
+    evaluate_matching_track,
+)
+from src.vsc.storage import load_features, store_features
 from torch.utils.data import DataLoader, IterableDataset
 from torch.utils.data._utils.collate import default_collate
 from torchvision import transforms
-from src.inference import Accelerator, VideoReaderType
-from src.video_reader.ffmpeg_video_reader import FFMpegVideoReader
-from src.video_reader.ffmpeg_py_video_reader import FFMpegPyVideoReader
-from src.vsc.index import VideoFeature
-from src.vsc.storage import load_features, store_features
-from src.vsc.candidates import CandidateGeneration, MaxScoreAggregation
-from src.score_normalization import score_normalize
-from src.vsc.metrics import CandidatePair, Match, average_precision, evaluate_matching_track
-from src.vsc.localization import (
-    VCSLLocalizationCandidateScore,
-    VCSLLocalizationMaxSim,
-    VCSLLocalizationMatchScore,
-)
-
-import torch.nn as nn
-from src.model import create_model_in_runtime, create_model_in_runtime_2
-from src.metadata import FFProbeMetadata, get_video_metadata
-from src.tta import TTA24ViewsTransform, TTA30ViewsTransform, TTA4ViewsTransform, TTA5ViewsTransform
-from src.postproc import sliding_pca
-
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)-8s %(message)s",
@@ -79,18 +87,25 @@ class VideoDataset(IterableDataset):
             filenames = glob.glob(os.path.join(path, "*.*"))
             filenames = (fn for fn in filenames if fn.rsplit(".", 1)[-1] in extensions)
 
-        filenames = [name for name in filenames if Path(name).stem not in ['R102796', 'R133364']]
+        filenames = [
+            name for name in filenames if Path(name).stem not in ["R102796", "R133364"]
+        ]
 
         if filter_by_asr:
-            self.metadatas = {Path(path).stem: get_video_metadata(path) for path in filenames}
+            self.metadatas = {
+                Path(path).stem: get_video_metadata(path) for path in filenames
+            }
             filtered_filenames = [
-                path for path in filenames if self.metadatas[Path(path).stem].stream.sample_aspect_ratio is not None
+                path
+                for path in filenames
+                if self.metadatas[Path(path).stem].stream.sample_aspect_ratio
+                is not None
             ]
         else:
             self.metadatas = None
             filtered_filenames = filenames
         self.videos = sorted(filtered_filenames)
-        print(f'filtered: #{len(filenames)} -> #{len(self.videos)}')
+        print(f"filtered: #{len(filenames)} -> #{len(self.videos)}")
 
         if not self.videos:
             raise Exception("No videos found!")
@@ -123,14 +138,21 @@ class VideoDataset(IterableDataset):
         name = os.path.basename(video_name).split(".")[0]
         if self.video_reader == VideoReaderType.FFMPEG:
             reader = FFMpegVideoReader(
-                video_path=video, required_fps=self.fps,
-                output_type=self.read_type, ffmpeg_path=self.ffmpeg_path,
+                video_path=video,
+                required_fps=self.fps,
+                output_type=self.read_type,
+                ffmpeg_path=self.ffmpeg_path,
             )
         elif self.video_reader == VideoReaderType.FFMPEGPY:
-            reader = FFMpegPyVideoReader(video_path=video, required_fps=self.fps, output_type=self.read_type)
+            reader = FFMpegPyVideoReader(
+                video_path=video, required_fps=self.fps, output_type=self.read_type
+            )
         elif self.video_reader == VideoReaderType.DECORD:
             from src.video_reader.decord_video_reader import DecordVideoReader
-            reader = DecordVideoReader(video_path=video, required_fps=self.fps, output_type=self.read_type)
+
+            reader = DecordVideoReader(
+                video_path=video, required_fps=self.fps, output_type=self.read_type
+            )
         else:
             raise ValueError(f"VideoReaderType: {self.video_reader} not supported")
         for start_timestamp, end_timestamp, frame in reader.frames():
@@ -240,7 +262,7 @@ def localize_and_verify(
     BATCH_SIZE = 512
     i = 0
     while i < len(candidates):
-        batch = candidates[i: i + BATCH_SIZE]
+        batch = candidates[i : i + BATCH_SIZE]
         matches.extend(alignment.localize_all(batch))
         i += len(batch)
         logger.info(
@@ -278,7 +300,12 @@ def match(
     candidates_per_query: float = 25.0,
 ) -> Tuple[str, str]:
     # Search
-    candidates = search(queries, refs, retrieve_per_query=retrieve_per_query, candidates_per_query=candidates_per_query)
+    candidates = search(
+        queries,
+        refs,
+        retrieve_per_query=retrieve_per_query,
+        candidates_per_query=candidates_per_query,
+    )
     # os.makedirs(output_path, exist_ok=True)
     # candidate_file = os.path.join(output_path, "candidates.csv")
     # CandidatePair.write_csv(candidates, candidate_file)
@@ -314,7 +341,16 @@ def match(
         return candidates, matches
 
 
-def worker_process(args, rank, world_size, output_filename, model_name, ref_path, noise_path, pca_matrix_path):
+def worker_process(
+    args,
+    rank,
+    world_size,
+    output_filename,
+    model_name,
+    ref_path,
+    noise_path,
+    pca_matrix_path,
+):
     logger.info(f"Starting worker {rank} of {world_size}.")
     device = get_device(args, rank, world_size)
 
@@ -367,15 +403,17 @@ def worker_process(args, rank, world_size, output_filename, model_name, ref_path
             load_features(noise_path),
             beta=1.2,
         )
-    
-    os.makedirs(output_filename.replace('subset_matches.csv', 'output'), exist_ok=True)
+
+    os.makedirs(output_filename.replace("subset_matches.csv", "output"), exist_ok=True)
     # store_features(output_filename.replace('subset_matches.csv', f'output/subset_queries_{model_name}.npz'), queries)
     refs = load_features(ref_path)
 
     match(
         queries=queries,
         refs=refs,
-        output_file=output_filename.replace('subset_matches.csv', f'output/matches_{model_name}.csv'),
+        output_file=output_filename.replace(
+            "subset_matches.csv", f"output/matches_{model_name}.csv"
+        ),
         tn_max_step=5,
         min_length=3,
         tn_top_k=2,
@@ -386,7 +424,9 @@ def worker_process(args, rank, world_size, output_filename, model_name, ref_path
 
 
 @torch.no_grad()
-def run_inference(dataloader, model, device, transforms=None, tta=True) -> Iterable[VideoFeature]:
+def run_inference(
+    dataloader, model, device, transforms=None, tta=True
+) -> Iterable[VideoFeature]:
     name = None
     embeddings = []
     timestamps = []
@@ -399,7 +439,11 @@ def run_inference(dataloader, model, device, transforms=None, tta=True) -> Itera
             feature = np.concatenate(embeddings, axis=0)
             if tta:
                 timestamps = timestamps.reshape(-1, num_views).transpose(1, 0).ravel()
-                feature = feature.reshape(-1, num_views, feature.shape[1]).transpose(1, 0, 2).reshape(-1, feature.shape[1])
+                feature = (
+                    feature.reshape(-1, num_views, feature.shape[1])
+                    .transpose(1, 0, 2)
+                    .reshape(-1, feature.shape[1])
+                )
             yield VideoFeature(
                 video_id=name,
                 timestamps=timestamps,
@@ -412,7 +456,7 @@ def run_inference(dataloader, model, device, transforms=None, tta=True) -> Itera
             if tta:
                 metadatas = dataloader.dataset.metadatas
                 # if metadatas[name].format.nb_streams == 2:
-                if metadatas[name].stream.time_base == '1/10240':
+                if metadatas[name].stream.time_base == "1/10240":
                     tta_transforms = TTA4ViewsTransform(transforms)
                 else:
                     tta_transforms = TTA5ViewsTransform(transforms)
@@ -435,7 +479,11 @@ def run_inference(dataloader, model, device, transforms=None, tta=True) -> Itera
     feature = np.concatenate(embeddings, axis=0)
     if tta:
         timestamps = timestamps.reshape(-1, num_views).transpose(1, 0).ravel()
-        feature = feature.reshape(-1, num_views, feature.shape[1]).transpose(1, 0, 2).reshape(-1, feature.shape[1])
+        feature = (
+            feature.reshape(-1, num_views, feature.shape[1])
+            .transpose(1, 0, 2)
+            .reshape(-1, feature.shape[1])
+        )
     yield VideoFeature(
         video_id=name,
         timestamps=timestamps,
@@ -444,7 +492,9 @@ def run_inference(dataloader, model, device, transforms=None, tta=True) -> Itera
 
 
 @torch.no_grad()
-def run_inference_ensemble(dataloader, model_list, device, transforms_list=None, weight_list=None, tta=True) -> Iterable[VideoFeature]:
+def run_inference_ensemble(
+    dataloader, model_list, device, transforms_list=None, weight_list=None, tta=True
+) -> Iterable[VideoFeature]:
     name = None
     embeddings = []
     timestamps = []
@@ -460,7 +510,11 @@ def run_inference_ensemble(dataloader, model_list, device, transforms_list=None,
             feature = np.concatenate(embeddings, axis=0)
             if tta:
                 timestamps = timestamps.reshape(-1, num_views).transpose(1, 0).ravel()
-                feature = feature.reshape(-1, num_views, feature.shape[1]).transpose(1, 0, 2).reshape(-1, feature.shape[1])
+                feature = (
+                    feature.reshape(-1, num_views, feature.shape[1])
+                    .transpose(1, 0, 2)
+                    .reshape(-1, feature.shape[1])
+                )
             yield VideoFeature(
                 video_id=name,
                 timestamps=timestamps,
@@ -475,7 +529,7 @@ def run_inference_ensemble(dataloader, model_list, device, transforms_list=None,
             if tta:
                 metadatas = dataloader.dataset.metadatas
                 # if metadatas[name].format.nb_streams == 2:
-                if metadatas[name].stream.time_base == '1/10240':
+                if metadatas[name].stream.time_base == "1/10240":
                     tta_transforms = TTA4ViewsTransform(transforms)
                 else:
                     tta_transforms = TTA5ViewsTransform(transforms)
@@ -500,7 +554,11 @@ def run_inference_ensemble(dataloader, model_list, device, transforms_list=None,
     feature = np.concatenate(embeddings, axis=0)
     if tta:
         timestamps = timestamps.reshape(-1, num_views).transpose(1, 0).ravel()
-        feature = feature.reshape(-1, num_views, feature.shape[1]).transpose(1, 0, 2).reshape(-1, feature.shape[1])
+        feature = (
+            feature.reshape(-1, num_views, feature.shape[1])
+            .transpose(1, 0, 2)
+            .reshape(-1, feature.shape[1])
+        )
 
     yield VideoFeature(
         video_id=name,

@@ -20,18 +20,17 @@ import argparse
 import logging
 import os
 import tempfile
-from typing import List, Optional, Tuple
 from pathlib import Path
+from typing import List, Optional, Tuple
+
 import numpy as np
 import pandas as pd
-
 import tqdm
-from torch import multiprocessing
-
 from src.inference import Accelerator, VideoReaderType
 from src.inference_impl import search, validate_total_descriptors
-from src.vsc.storage import load_features, store_features
 from src.vsc.index import VideoFeature
+from src.vsc.storage import load_features, store_features
+from torch import multiprocessing
 
 parser = argparse.ArgumentParser()
 inference_parser = parser.add_argument_group("Inference")
@@ -47,7 +46,7 @@ inference_parser.add_argument("--scratch_path", required=False)
 
 dataset_parser = parser.add_argument_group("Dataset")
 # multiple dataset path
-dataset_parser.add_argument("--dataset_paths", nargs='+')
+dataset_parser.add_argument("--dataset_paths", nargs="+")
 dataset_parser.add_argument("--gt_path")
 dataset_parser.add_argument("--fps", default=1, type=float)
 dataset_parser.add_argument("--stride", type=int)
@@ -59,7 +58,9 @@ dataset_parser.add_argument(
 )
 dataset_parser.add_argument("--ffmpeg_path", default="ffmpeg")
 dataset_parser.add_argument("--tta", action="store_true")
-dataset_parser.add_argument("--mode", default="whole", choices=["whole", "eval", "test", "tune"])
+dataset_parser.add_argument(
+    "--mode", default="whole", choices=["whole", "eval", "test", "tune"]
+)
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)-8s %(message)s",
@@ -81,10 +82,16 @@ def main(args):
 
     if args.video_reader == "DECORD":
         import subprocess
-        subprocess.run(["pip", "install", "wheels/decord-0.6.0-py3-none-manylinux2010_x86_64.whl"], check=True)
+
+        subprocess.run(
+            ["pip", "install", "wheels/decord-0.6.0-py3-none-manylinux2010_x86_64.whl"],
+            check=True,
+        )
 
     with tempfile.TemporaryDirectory() as tmp_path:
-        splits = ['_'.join(p.split('/')[-2:]) for p in args.dataset_paths]  # ./vsc/eval_subset/reference -> eval_subset_reference
+        splits = [
+            "_".join(p.split("/")[-2:]) for p in args.dataset_paths
+        ]  # ./vsc/eval_subset/reference -> eval_subset_reference
         os.makedirs(args.output_path, exist_ok=True)
         if args.scratch_path:
             os.makedirs(args.scratch_path, exist_ok=True)
@@ -106,7 +113,15 @@ def main(args):
                     worker_files.append(output_files)
                     p = multiprocessing.Process(
                         target=distributed_worker_process,
-                        args=(args, rank, args.processes, backend, output_files, args.dataset_paths, args.tta),
+                        args=(
+                            args,
+                            rank,
+                            args.processes,
+                            backend,
+                            output_files,
+                            args.dataset_paths,
+                            args.tta,
+                        ),
                     )
                     processes.append(p)
                     p.start()
@@ -119,6 +134,7 @@ def main(args):
                 for p in processes:
                     p.kill()
             if success:
+
                 def merge_feature_files(filenames, output_filename: str) -> int:
                     features = []
                     for fn in filenames:
@@ -131,14 +147,22 @@ def main(args):
                 for files, split in zip(output_files_each_split, splits):
                     output_file = os.path.join(args.output_path, f"{split}.npz")
                     num_files = merge_feature_files(files, output_file)
-                    logger.info(f"Features for {num_files} videos saved to {output_file}")
+                    logger.info(
+                        f"Features for {num_files} videos saved to {output_file}"
+                    )
 
         else:
             output_files = [
-                os.path.join(args.output_path, f"{split}.npz")
-                for split in splits
+                os.path.join(args.output_path, f"{split}.npz") for split in splits
             ]
-            worker_process(args, args.distributed_rank, args.distributed_size, output_files, args.dataset_paths, args.tta)
+            worker_process(
+                args,
+                args.distributed_rank,
+                args.distributed_size,
+                output_files,
+                args.dataset_paths,
+                args.tta,
+            )
             success = True
 
     if success:
@@ -153,7 +177,9 @@ def main(args):
 
     video_features_dict = {}
     for split in splits:
-        video_features_dict[split] = load_features(os.path.join(args.output_path, f"{split}.npz"))
+        video_features_dict[split] = load_features(
+            os.path.join(args.output_path, f"{split}.npz")
+        )
 
     evaluate(
         queries=video_features_dict[splits[0]],
@@ -177,14 +203,17 @@ def distributed_worker_process(pargs, rank, world_size, backend, *args, **kwargs
     worker_process(pargs, rank, world_size, *args, **kwargs)
 
 
-def worker_process(args, rank, world_size, output_files: List[str], dataset_paths: List[str], tta: bool = False):
+def worker_process(
+    args,
+    rank,
+    world_size,
+    output_files: List[str],
+    dataset_paths: List[str],
+    tta: bool = False,
+):
+    from src.inference_impl import VideoDataset, get_device, run_inference
+    from src.model import create_copy_type_pred_model, create_model_in_runtime
     from torch.utils.data import DataLoader
-    from src.inference_impl import (
-        VideoDataset,
-        get_device,
-        run_inference,
-    )
-    from src.model import create_model_in_runtime, create_copy_type_pred_model
 
     logger.info(f"Starting worker {rank} of {world_size}.")
     device = get_device(args, rank, world_size)
@@ -222,7 +251,9 @@ def worker_process(args, rank, world_size, output_files: List[str], dataset_path
     else:
         do_tta_list = [False] * len(dataset_paths)
 
-    for output_filename, dataset_path, do_tta in zip(output_files, dataset_paths, do_tta_list):
+    for output_filename, dataset_path, do_tta in zip(
+        output_files, dataset_paths, do_tta_list
+    ):
         # batch_size = 1 if do_tta else args.batch_size
         dataset = VideoDataset(
             dataset_path,
@@ -255,13 +286,19 @@ def worker_process(args, rank, world_size, output_files: List[str], dataset_path
         store_features(output_filename, video_features)
 
 
-def evaluate(
-    queries, refs, noises, gt_path, output_path, sn_method='SN'
-):
+def evaluate(queries, refs, noises, gt_path, output_path, sn_method="SN"):
     import faiss
-    from src.vsc.metrics import CandidatePair, Match, average_precision, evaluate_matching_track
-    from src.score_normalization import negative_embedding_subtraction, score_normalize_with_ref
     from src.postproc import sliding_pca, sliding_pca_with_ref
+    from src.score_normalization import (
+        negative_embedding_subtraction,
+        score_normalize_with_ref,
+    )
+    from src.vsc.metrics import (
+        CandidatePair,
+        Match,
+        average_precision,
+        evaluate_matching_track,
+    )
 
     stride = args.stride if args.stride is not None else args.fps
     video_features, pca_matrix = sliding_pca_with_ref(
@@ -270,13 +307,13 @@ def evaluate(
         noises=noises,
         stride=stride,
     )
-    queries = video_features['query']
-    refs = video_features['ref']
-    noises = video_features['noise']
+    queries = video_features["query"]
+    refs = video_features["ref"]
+    noises = video_features["noise"]
     store_features(Path(output_path) / "noise.npz", noises)
     faiss.write_VectorTransform(pca_matrix, str(Path(output_path) / "pca_matrix.bin"))
 
-    if sn_method == 'SN':
+    if sn_method == "SN":
         queries, refs = score_normalize_with_ref(
             queries=queries,
             refs=refs,
@@ -304,42 +341,77 @@ def evaluate(
 
     gt_matches = Match.read_csv(gt_path, is_gt=True)
     ap = average_precision(CandidatePair.from_matches(gt_matches), candidates)
-    CandidatePair.write_csv(candidates, Path(output_path) / 'candidates.csv')
+    CandidatePair.write_csv(candidates, Path(output_path) / "candidates.csv")
     logger.info(f"uAP: {ap.ap:.4f}")
 
 
 def tune(
-    queries, refs, noises, gt_path, output_path,
+    queries,
+    refs,
+    noises,
+    gt_path,
+    output_path,
 ):
     from sklearn.model_selection import ParameterGrid
-    from src.vsc.metrics import CandidatePair, Match, average_precision, evaluate_matching_track
-    from src.score_normalization import negative_embedding_subtraction, score_normalize_with_ref
     from src.postproc import sliding_pca, sliding_pca_with_ref
+    from src.score_normalization import (
+        negative_embedding_subtraction,
+        score_normalize_with_ref,
+    )
+    from src.vsc.metrics import (
+        CandidatePair,
+        Match,
+        average_precision,
+        evaluate_matching_track,
+    )
 
-    param_grid = [{
-    #     "sn_method": ['SN'],
-    #     "beta": [0.8, 0.9, 1.0],
-    #     "stride": [3],
-    #     "fps": [2],
-    #     "k": [10],
-    #     "alpha": [2.0],
-    # }, {
-        "sn_method": ['NES'],
-        "beta": [1.2, 1.5],
-        "stride": [3],
-        "fps": [2],
-        "k": [10, 20],
-        "alpha": [1.0, 2.0],
-    }]
+    param_grid = [
+        {
+            #     "sn_method": ['SN'],
+            #     "beta": [0.8, 0.9, 1.0],
+            #     "stride": [3],
+            #     "fps": [2],
+            #     "k": [10],
+            #     "alpha": [2.0],
+            # }, {
+            "sn_method": ["NES"],
+            "beta": [1.2, 1.5],
+            "stride": [3],
+            "fps": [2],
+            "k": [10, 20],
+            "alpha": [1.0, 2.0],
+        }
+    ]
 
     rows = []
 
     for params in ParameterGrid(param_grid):
 
-        if params['fps'] == 1:
-            _queries = [VideoFeature(video_id=_.video_id, feature=_.feature[::2], timestamps=_.timestamps[::2]) for _ in queries]
-            _refs = [VideoFeature(video_id=_.video_id, feature=_.feature[::2], timestamps=_.timestamps[::2]) for _ in refs]
-            _noises = [VideoFeature(video_id=_.video_id, feature=_.feature[::2], timestamps=_.timestamps[::2]) for _ in noises]
+        if params["fps"] == 1:
+            _queries = [
+                VideoFeature(
+                    video_id=_.video_id,
+                    feature=_.feature[::2],
+                    timestamps=_.timestamps[::2],
+                )
+                for _ in queries
+            ]
+            _refs = [
+                VideoFeature(
+                    video_id=_.video_id,
+                    feature=_.feature[::2],
+                    timestamps=_.timestamps[::2],
+                )
+                for _ in refs
+            ]
+            _noises = [
+                VideoFeature(
+                    video_id=_.video_id,
+                    feature=_.feature[::2],
+                    timestamps=_.timestamps[::2],
+                )
+                for _ in noises
+            ]
         else:
             _queries = queries
             _refs = refs
@@ -349,18 +421,18 @@ def tune(
             queries=_queries,
             refs=_refs,
             noises=_noises,
-            stride=params['stride'],
+            stride=params["stride"],
         )
-        _queries = video_features['query']
-        _refs = video_features['ref']
-        _noises = video_features['noise']
+        _queries = video_features["query"]
+        _refs = video_features["ref"]
+        _noises = video_features["noise"]
 
-        if params['sn_method'] == 'SN':
+        if params["sn_method"] == "SN":
             norm_queries, norm_refs = score_normalize_with_ref(
                 queries=_queries,
                 refs=_refs,
                 score_norm_refs=_noises,
-                beta=params['beta'],
+                beta=params["beta"],
             )
 
         else:
@@ -370,9 +442,9 @@ def tune(
                 score_norm_refs=_noises,
                 pre_l2_normalize=False,
                 post_l2_normalize=False,
-                beta=params['beta'],
-                k=params['k'],
-                alpha=params['alpha'],
+                beta=params["beta"],
+                k=params["k"],
+                alpha=params["alpha"],
             )
 
         candidates = search(norm_queries, norm_refs)
@@ -381,15 +453,17 @@ def tune(
         gt_matches = Match.read_csv(gt_path, is_gt=True)
         ap = average_precision(CandidatePair.from_matches(gt_matches), candidates)
 
-        rows.append({
-            "uAP": ap.ap,
-            **params,
-        })
+        rows.append(
+            {
+                "uAP": ap.ap,
+                **params,
+            }
+        )
         print(rows[-1])
 
     df = pd.DataFrame(rows)
     print(df.to_csv())
-    df.to_csv('tuning_result.csv', index=False)
+    df.to_csv("tuning_result.csv", index=False)
 
 
 if __name__ == "__main__":
@@ -406,9 +480,13 @@ if __name__ == "__main__":
         )
     elif args.mode == "test":
         evaluate(
-            queries=load_features(os.path.join(args.output_path, f"phase_2_uB82_query.npz")),
+            queries=load_features(
+                os.path.join(args.output_path, f"phase_2_uB82_query.npz")
+            ),
             refs=load_features(os.path.join(args.output_path, f"test_reference.npz")),
-            noises=load_features(os.path.join(args.output_path, f"train_reference.npz")),
+            noises=load_features(
+                os.path.join(args.output_path, f"train_reference.npz")
+            ),
             gt_path=args.gt_path,
             output_path=args.output_path,
             sn_method="SN",

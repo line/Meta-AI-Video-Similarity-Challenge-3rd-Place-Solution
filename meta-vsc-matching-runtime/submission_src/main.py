@@ -13,11 +13,12 @@ WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 License for the specific language governing permissions and limitations
 under the License.
 """
-from pathlib import Path
-import pandas as pd
-import numpy as np
 import subprocess
 import time
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
 
 ROOT_DIRECTORY = Path("/code_execution")
 DATA_DIRECTORY = Path("/data")

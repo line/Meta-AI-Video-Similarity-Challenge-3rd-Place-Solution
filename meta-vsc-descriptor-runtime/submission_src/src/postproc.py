@@ -17,12 +17,11 @@ from typing import Dict, List
 
 import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
-
 from src.vsc.index import VideoFeature
 
 
 def _sliding_window_and_concat(
-        vfs: List[VideoFeature], stride: int = 1
+    vfs: List[VideoFeature], stride: int = 1
 ) -> Dict[str, List[VideoFeature]]:
 
     new_vfs = []
@@ -48,15 +47,20 @@ def _sliding_window_and_concat(
         for i in range(num_views):
             new_feat = reshaped_feats[i]
             new_ts = reshaped_ts[i]
-            new_feat = np.concatenate([new_feat[:num_stacks // 2], new_feat, new_feat[-(num_stacks // 2):]], axis=0)
+            new_feat = np.concatenate(
+                [new_feat[: num_stacks // 2], new_feat, new_feat[-(num_stacks // 2) :]],
+                axis=0,
+            )
             new_feat = sliding_window_view(new_feat, num_stacks, axis=0)
             assert len(new_feat) == len(reshaped_feats[i])
             if stride > 1:
-                new_feat = new_feat[stride // 2::stride]
-                new_ts = new_ts[stride // 2::stride]
+                new_feat = new_feat[stride // 2 :: stride]
+                new_ts = new_ts[stride // 2 :: stride]
             weight = np.array(kernel).reshape(1, 1, -1)
-            new_feat = (new_feat * weight)
-            new_feat = new_feat.transpose(0, 2, 1).reshape(-1, new_feat.shape[1] * num_stacks)
+            new_feat = new_feat * weight
+            new_feat = new_feat.transpose(0, 2, 1).reshape(
+                -1, new_feat.shape[1] * num_stacks
+            )
             new_feats.append(new_feat)
             new_timestamps.append(new_ts)
 
@@ -76,6 +80,7 @@ def _sliding_window_and_concat(
 
 def _fit_pca(noises, n_components=512) -> Dict[str, List[VideoFeature]]:
     import faiss
+
     noise_feats = np.concatenate([vf.feature for vf in noises])
     noise_feats = noise_feats.astype(np.float32)
     mat = faiss.PCAMatrix(noise_feats.shape[-1], n_components)
@@ -100,29 +105,29 @@ def _apply_pca(vfs, mat) -> Dict[str, List[VideoFeature]]:
 
 
 def sliding_pca(
-        queries: List[VideoFeature],
-        mat: "faiss.PCAMatrix",
-        stride: int = 1,
-    ) -> List[VideoFeature]:
+    queries: List[VideoFeature],
+    mat: "faiss.PCAMatrix",
+    stride: int = 1,
+) -> List[VideoFeature]:
     queries = _sliding_window_and_concat(queries, stride=stride)
     queries = _apply_pca(queries, mat)
     return queries
 
 
 def sliding_pca_with_ref(
-        queries: List[VideoFeature],
-        refs: List[VideoFeature],
-        noises: List[VideoFeature],
-        stride: int = 1,
-        n_components: int = 512,
-    ) -> Dict[str, List[VideoFeature]]:
+    queries: List[VideoFeature],
+    refs: List[VideoFeature],
+    noises: List[VideoFeature],
+    stride: int = 1,
+    n_components: int = 512,
+) -> Dict[str, List[VideoFeature]]:
 
     video_features = {
-        'query': _sliding_window_and_concat(queries, stride=stride),
-        'ref': _sliding_window_and_concat(refs, stride=stride),
-        'noise': _sliding_window_and_concat(noises, stride=stride),
+        "query": _sliding_window_and_concat(queries, stride=stride),
+        "ref": _sliding_window_and_concat(refs, stride=stride),
+        "noise": _sliding_window_and_concat(noises, stride=stride),
     }
-    mat = _fit_pca(video_features['noise'], n_components=n_components)
+    mat = _fit_pca(video_features["noise"], n_components=n_components)
 
     for k, vfs in video_features.items():
         video_features[k] = _apply_pca(vfs, mat)

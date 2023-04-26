@@ -1,8 +1,9 @@
 import argparse
 import json
 from pathlib import Path
-import pandas as pd
+
 import numpy as np
+import pandas as pd
 from sklearn.model_selection import train_test_split
 
 AUG_LABEL_MAPPING = {
@@ -47,30 +48,40 @@ if __name__ == "__main__":
     labels = sorted(aug_types["label"].unique())
     label_idx = pd.Series(np.arange(len(labels)), index=labels, name="label_idx")
 
-    aug_label_mapping = aug_types.join(label_idx, on="label", how="left").set_index("aug_type")
+    aug_label_mapping = aug_types.join(label_idx, on="label", how="left").set_index(
+        "aug_type"
+    )
 
     print("Labels")
     print(aug_label_mapping.to_markdown())
 
     metadata = metadata.join(aug_label_mapping, on="aug_type", how="left")
 
-    # Grouping 
+    # Grouping
     sorted_tuple = lambda x: tuple(sorted(x))
     metadata = (
-        metadata
-        .drop_duplicates()
+        metadata.drop_duplicates()
         .groupby(["video_id", "video_path"])
-        .agg({
-            "aug_type": sorted_tuple,
-            "label": sorted_tuple,
-            "label_idx": sorted_tuple,
-        })
+        .agg(
+            {
+                "aug_type": sorted_tuple,
+                "label": sorted_tuple,
+                "label_idx": sorted_tuple,
+            }
+        )
         .reset_index()
     )
 
     # Random split
-    label_counts = metadata["label"].value_counts().reset_index(name="c").rename(columns={"index": "label"})
-    label_counts["stratify_label"] = label_counts.apply(lambda x: x["label"] if x["c"] >= 10 else ("minor",), axis=1)
+    label_counts = (
+        metadata["label"]
+        .value_counts()
+        .reset_index(name="c")
+        .rename(columns={"index": "label"})
+    )
+    label_counts["stratify_label"] = label_counts.apply(
+        lambda x: x["label"] if x["c"] >= 10 else ("minor",), axis=1
+    )
     stratifier = metadata.merge(label_counts, on="label")["stratify_label"]
 
     train, valid = train_test_split(

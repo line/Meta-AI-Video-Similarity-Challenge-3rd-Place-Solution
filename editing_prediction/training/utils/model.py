@@ -18,7 +18,9 @@ class LitModel(pl.LightningModule):
             model.head[-1] = nn.Linear(1024, num_classes)
             self.model = model
         else:
-            self.model = timm.create_model(model_name, num_classes=num_classes, pretrained=True)
+            self.model = timm.create_model(
+                model_name, num_classes=num_classes, pretrained=True
+            )
 
         self.criterion = nn.BCEWithLogitsLoss()
 
@@ -65,9 +67,15 @@ class LitModel(pl.LightningModule):
         auc = self.valid_auc.compute()
         ap = self.valid_ap.compute()
 
-        self.log_dict({f"valid_{l}_acc": x for l, x in zip(self.labels, acc)}, sync_dist=True)
-        self.log_dict({f"valid_{l}_auc": x for l, x in zip(self.labels, auc)}, sync_dist=True)
-        self.log_dict({f"valid_{l}_ap": x for l, x in zip(self.labels, ap)}, sync_dist=True)
+        self.log_dict(
+            {f"valid_{l}_acc": x for l, x in zip(self.labels, acc)}, sync_dist=True
+        )
+        self.log_dict(
+            {f"valid_{l}_auc": x for l, x in zip(self.labels, auc)}, sync_dist=True
+        )
+        self.log_dict(
+            {f"valid_{l}_ap": x for l, x in zip(self.labels, ap)}, sync_dist=True
+        )
 
         self.valid_acc.reset()
         self.valid_auc.reset()
