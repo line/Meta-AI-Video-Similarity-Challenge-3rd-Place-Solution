@@ -23,6 +23,13 @@ Please submit an issue rather than PR if you have any suggestions.
 <!-- - reproduce descriptor track: see [meta-vsc-descriptor-runtime/README.md](meta-vsc-descriptor-runtime/README.md) -->
 <!-- - reproduce matching track: see [meta-vsc-matching-runtime/README.md](meta-vsc-matching-runtime/README.md) -->
 
+## Reproduce our solution
+
+1. Train the ViT based model with DISC21 dataset. Instructions for reproducing the training of this model are described in [training/README.md](training/README.md).
+2. Train the editing prediction model. Instructions for reproducing the training of this model are described in [editing_prediction/README.md](editing_prediction/README.md).
+3. Run the descriptor track runtime following this instruction: [meta-vsc-descriptor-runtime/README.md](meta-vsc-descriptor-runtime/README.md).
+4. Run the matching track runtime following this instruction:: [meta-vsc-matching-runtime/README.md](meta-vsc-matching-runtime/README.md).
+
 ## Reference
 - https://github.com/drivendataorg/meta-vsc-descriptor-runtime
 - https://github.com/drivendataorg/meta-vsc-matching-runtime
