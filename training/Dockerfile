@@ -1,4 +1,10 @@
-FROM harbor.linecorp.com/cvl-dev/ubuntu:cuda11.5.1-cudnn8-opencv4.5.2-ubuntu18.04
+FROM nvidia/cuda:11.5.1-cudnn8-devel-ubuntu18.04
+
+RUN : \
+    && apt-get update \
+    && apt-get install -y wget \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN : \
     && apt-key del 7fa2af80 \
@@ -13,6 +19,12 @@ RUN : \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         python3.9-venv python3.9-dev \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ffmpeg \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN : \
+    && apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends git libmagic-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

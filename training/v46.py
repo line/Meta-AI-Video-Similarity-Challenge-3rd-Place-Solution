@@ -436,7 +436,7 @@ def train(args):
                 fc_dim=args.feature_dim,
                 l2_normalize=args.l2_normalize,
             )
-            data_config = timm.data.resolve_model_data_config(backbone)
+            data_config = timm.data.resolve_data_config(args={}, model=backbone)
 
             import math
             window_size = 24
@@ -856,42 +856,42 @@ if __name__ == "__main__":
     parser.add_argument(
         "--query_video_dir",
         type=str,
-        default="/share-cvlab/yokoo/vsc/competition_data/train/query/",
+        required=True,
     )
     parser.add_argument(
         "--ref_video_dir",
         type=str,
-        default="/share-cvlab/yokoo/vsc/competition_data/train/reference/",
+        required=True,
     )
     parser.add_argument(
         "--noise_video_dir",
         type=str,
-        default="/share-cvlab/yokoo/vsc/competition_data/test/reference/",
+        required=True,
     )
     parser.add_argument(
         "--gt_path",
         type=str,
-        default="/share-cvlab/yokoo/vsc/competition_data/train/train_matching_ground_truth.csv",
+        required=True,
     )
     parser.add_argument(
         "--eval_gt_path",
         type=str,
-        default="/share-cvlab/yokoo/vsc/competition_data/train/train_matching_ground_truth.csv",
+        required=True,
     )
     parser.add_argument(
         "--query_metadata_path",
         type=str,
-        default="/share-cvlab/yokoo/vsc/competition_data/train/train_query_metadata.csv",
+        required=True,
     )
     parser.add_argument(
         "--ref_metadata_path",
         type=str,
-        default="/share-cvlab/yokoo/vsc/competition_data/train/train_reference_metadata.csv",
+        required=True,
     )
     parser.add_argument(
         "--noise_metadata_path",
         type=str,
-        default="/share-cvlab/yokoo/vsc/competition_data/test/test_reference_metadata.csv",
+        required=True,
     )
     parser.add_argument("-a", "--arch", metavar="ARCH", default="swin_base_patch4_window7_224")
     parser.add_argument("--workers", default=os.cpu_count(), type=int)

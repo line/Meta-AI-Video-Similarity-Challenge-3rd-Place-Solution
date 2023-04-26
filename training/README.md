@@ -35,8 +35,8 @@ docker build -t vsc-dev .
 
 docker run -it --rm --gpus all --shm-size 256gb \
     -v `pwd`:/app \
-    -v /_vsfs_managed/5b94c406-d5c4-430f-bb1e-15b3c0d138d7/share/yokoo/:/share-cvlab/yokoo/ \
-    -v /_vsfs_managed/d61c6d35-f944-4908-9673-5b59244e1506/share/:/yokoo-data/ \
+    -v ${COMPETITION_DATA}:${COMPETITION_DATA} \
+    -v ${DISC_DATA}:${DISC_DATA} \
     -e COMPETITION_DATA=${COMPETITION_DATA} \
     -e DISC_DATA=${DISC_DATA} \
     vsc-dev bash
@@ -112,6 +112,7 @@ python v45.py \
 
 ```
 WEIGHT_PATH=v45/train_0315_085057/model.pth  # set the path to the trained model
+STACK_PRED_CSV_PATH=???  # TODO
 python inference.py \
     -a vit_base_r50_s16_224_in21k --workers 8 \
     --val-batch-size 1 --input-size 448 --feature_dim 512 \
@@ -121,6 +122,11 @@ python inference.py \
     --ref_video_dir ${COMPETITION_DATA}/train/reference \
     --test_query_video_dir ${COMPETITION_DATA}/test/query \
     --test_ref_video_dir ${COMPETITION_DATA}/test/reference \
+    --query_metadata_path ${COMPETITION_DATA}/train/train_query_metadata.csv \
+    --test_ref_metadata_path ${COMPETITION_DATA}/test/test_reference_metadata.csv \
+    --test_query_metadata_path ${COMPETITION_DATA}/test/test_query_metadata.csv \
+    --ref_metadata_path ${COMPETITION_DATA}/train/train_reference_metadata.csv \
     --gt_path ${COMPETITION_DATA}/train/train_matching_ground_truth.csv \
+    --copy_type_pred_path {STACK_PRED_CSV_PATH} \
     --pred_output_dir inference_output --weight ${WEIGHT_PATH}
 ```
