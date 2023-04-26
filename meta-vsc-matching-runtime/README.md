@@ -12,6 +12,14 @@ make data-subset DATASET=train SUBSET_PROPORTION=0.1
 make data-subset DATASET=test SUBSET_PROPORTION=0.1
 ```
 
+Prapre the model weights:
+
+```
+wget https://github.com/lyakaap/ISC21-Descriptor-Track-1st/releases/download/v1.0.1/isc_ft_v107.pth.tar -P submission_src/model_assets
+wget https://github.com/lyakaap/ISC21-Descriptor-Track-1st/releases/download/v1.0.3/disc21_ft_vit_base_r50_s16_224_in21k.pth  -P submission_src/model_assets
+cp your/trained/editing_prediction/model.ckpt submission_src/model_assets/copy_type_pred__convnext_clip.ckpt
+```
+
 Set environment variables:
 
 ```

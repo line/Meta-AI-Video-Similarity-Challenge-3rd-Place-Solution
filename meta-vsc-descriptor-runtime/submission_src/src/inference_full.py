@@ -163,9 +163,9 @@ def main(args):
         output_path=args.output_path,
     )
 
-    for split in splits:
-        logger.info(f"Validating {split} descriptors")
-        validate_total_descriptors(video_features=video_features_dict[split])
+    # for split in splits:
+    #     logger.info(f"Validating {split} descriptors")
+    #     validate_total_descriptors(video_features=video_features_dict[split])
 
 
 def distributed_worker_process(pargs, rank, world_size, backend, *args, **kwargs):

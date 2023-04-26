@@ -802,23 +802,6 @@ def aggregate_preds_and_evaluate(
 
 
 if __name__ == "__main__":
-    """Usage:  
-python v45.py \
-  -a vit_base_r50_s16_224.orig_in21k --seed 999 --workers 8 \
-  --epochs 3 --lr 0.01 --wd 1e-6 --batch-size 16 --val-batch-size 16 \
-  --pos-margin 0.0 --neg-margin 1.0 \
-  --input-size 384 --memory-size 1000 --feature_dim 512 \
-  --ddp_strategy deepspeed_stage_2 --warmup_steps 0 \
-  --query_video_dir /app/data/vsc/competition_data/train/query \
-  --ref_video_dir /app/data/vsc/competition_data/train/reference \
-  --noise_video_dir /app/data/vsc/competition_data/test/reference \
-  --eval_gt_path /share-cvlab/yokoo/vsc/competition_data/train/train_matching_ground_truth.csv \
-  --query_metadata_path /share-cvlab/yokoo/vsc/competition_data/train/train_query_metadata.csv \
-  --ref_metadata_path /share-cvlab/yokoo/vsc/competition_data/train/train_reference_metadata.csv \
-  --noise_metadata_path /share-cvlab/yokoo/vsc/competition_data/test/test_reference_metadata.csv \
-  --num_frames 32 --eval_subset --num_negatives 2 \
-  /yokoo-data/isc/
-    """
     parser = argparse.ArgumentParser(description="VSC Image Level Training")
     parser.add_argument("data", metavar="DIR", help="path to dataset")
     parser.add_argument(

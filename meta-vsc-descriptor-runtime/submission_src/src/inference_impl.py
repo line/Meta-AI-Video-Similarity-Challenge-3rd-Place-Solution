@@ -361,7 +361,7 @@ def validate_total_descriptors(video_features: List[VideoFeature], meta: Optiona
     n_features = sum([_.feature.shape[0] for _ in video_features])
 
     if meta is None:
-        meta_root = Path('/share-cvlab/yokoo/vsc/competition_data')
+        meta_root = Path('./metadata_root')
         meta_paths = [
             meta_root / 'train' / 'train_query_metadata.csv',
             meta_root / 'train' / 'train_reference_metadata.csv',

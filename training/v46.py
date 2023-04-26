@@ -833,24 +833,6 @@ def aggregate_preds_and_evaluate(
 
 
 if __name__ == "__main__":
-    """Usage:  
-    cv11
-    CUDA_VISIBLE_DEVICES=4,5,6,7 python v44.py \
-        -a vit_base_r50_s16_224.orig_in21k --seed 22999 --workers 8 \
-        --epochs 10 --lr 0.001 --wd 1e-6 --optimizer sgd --batch-size 32 --val-batch-size 8 \
-        --pos-margin 0.0 --neg-margin 1.0 --sample_size 100000 \
-        --input-size 512 --memory-size 5000 --feature_dim 512 \
-        --ddp_strategy deepspeed_stage_2 --warmup_steps 0 \
-        --query_video_dir /app/data/vsc/competition_data/train/query \
-        --ref_video_dir /app/data/vsc/competition_data/train/reference \
-        --noise_video_dir /app/data/vsc/competition_data/test/reference \
-        --eval_gt_path /share-cvlab/yokoo/vsc/competition_data/train/train_matching_ground_truth.csv \
-        --query_metadata_path /share-cvlab/yokoo/vsc/competition_data/train/train_query_metadata.csv \
-        --ref_metadata_path /share-cvlab/yokoo/vsc/competition_data/train/train_reference_metadata.csv \
-        --noise_metadata_path /share-cvlab/yokoo/vsc/competition_data/test/test_reference_metadata.csv \
-        --num_frames 32 --eval_subset --mode predict --weight v44/train_0314_014831/model.pth \
-        /app/data/isc/
-    """
     parser = argparse.ArgumentParser(description="VSC Image Level Training")
     parser.add_argument("data", metavar="DIR", help="path to dataset")
     parser.add_argument(

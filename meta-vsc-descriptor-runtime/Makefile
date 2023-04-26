@@ -29,7 +29,8 @@ BLOCK_INTERNET = true
 
 DATASET?=test
 SUBSET_PROPORTION?=0.01
-FULL_RESULTS_DIR?=/yokoo-data/code/vsc/yokoo/isc_test/matching_track_2fps
+FULL_RESULTS_DIR?=./full_results
+COMPETITION_DATA?=./data
 
 # if not TTY (for example GithubActions CI) no interactive tty commands for docker
 ifneq (true, ${GITHUB_ACTIONS_NO_TTY})
@@ -82,8 +83,7 @@ interact-container: build _submission_write_perms
 		--mount type=bind,source="$(shell pwd)"/data,target=/data,readonly \
 		--mount type=bind,source="$(shell pwd)"/submission,target=/code_execution/submission \
 		--mount type=bind,source="$(shell pwd)"/submission_src,target=/code_execution/submission_src \
-		--mount type=bind,source=/_vsfs_managed/5b94c406-d5c4-430f-bb1e-15b3c0d138d7/share/yokoo,target=/share-cvlab/yokoo \
-		--mount type=bind,source=/_vsfs_managed/d61c6d35-f944-4908-9673-5b59244e1506/share,target=/yokoo-data \
+		--mount type=bind,source=${COMPETITION_DATA},target=${COMPETITION_DATA} \
 		--shm-size 8g \
 		-it \
 		${LOCAL_IMAGE} \
