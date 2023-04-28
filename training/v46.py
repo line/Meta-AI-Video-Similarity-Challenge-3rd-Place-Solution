@@ -425,81 +425,39 @@ def train(args):
     cudnn.benchmark = True
     pl.seed_everything(args.seed, workers=True)
 
-    # if args.dryrun:
-    #     sample_size = 32
-    #     args.epochs = 1
-    # else:
-    #     sample_size = 9999999
-
     input_size = tuple(map(int, args.input_size.split("x")))
     if len(input_size) == 1:
         input_size = (input_size[0], input_size[0])
 
+    backbone = timm.create_model(
+        args.arch, num_classes=0, pretrained=True, img_size=input_size
+    )
+    model = ISCNet(
+        backbone=backbone,
+        fc_dim=args.feature_dim,
+        l2_normalize=args.l2_normalize,
+    )
+    data_config = timm.data.resolve_data_config(args={}, model=backbone)
+
     if args.weight is not None:
         weight = torch.load(args.weight, map_location="cpu")
+        original_pos_embed = weight["backbone.pos_embed"].float()
 
-        if "swin" in args.arch:
-            backbone = timm.create_model(args.arch, num_classes=0, pretrained=True)
-            model = ISCNet(
-                backbone=backbone,
-                fc_dim=args.feature_dim,
-                l2_normalize=args.l2_normalize,
-            )
-            data_config = timm.data.resolve_data_config(args={}, model=backbone)
+        input_size = [320, 320]
+        new_pos_embed_size = [input_size[0] // 16, input_size[1] // 16]
 
-            import math
+        # original_pos_embed.shape: (1, seq_len, embed_dim)
+        # seq_len = H * W + 1 (for the [CLS] token)
+        H = int((original_pos_embed.shape[1] - 1) ** 0.5)
+        W = int((original_pos_embed.shape[1] - 1) / H)
 
-            window_size = 24
-            swin_state_dict = backbone.state_dict()
-            new_swin_state_dict = weight.copy()
-            for x in new_swin_state_dict:
-                if x.endswith("relative_position_index") or x.endswith("attn_mask"):
-                    print(x)
-                    pass
-                elif (
-                    x.endswith("relative_position_bias_table")
-                    and model.backbone.layers[0].blocks[0].attn.window_size[0] != 12
-                ):
-                    print("rel", x)
-                    pos_bias = weight[x].unsqueeze(0)[0]
-                    old_len = int(math.sqrt(len(pos_bias)))
-                    new_len = int(2 * window_size - 1)
-                    pos_bias = pos_bias.reshape(1, old_len, old_len, -1).permute(
-                        0, 3, 1, 2
-                    )
-                    pos_bias = F.interpolate(
-                        pos_bias,
-                        size=(new_len, new_len),
-                        mode="bicubic",
-                        align_corners=False,
-                    )
-                    new_swin_state_dict[x] = (
-                        pos_bias.permute(0, 2, 3, 1)
-                        .reshape(1, new_len**2, -1)
-                        .squeeze(0)
-                    )
-                else:
-                    new_swin_state_dict[x] = weight[x]
-            # model.backbone.window_size = window_size
-            weight = new_swin_state_dict
-        else:
-            backbone = timm.create_model(
-                args.arch, num_classes=0, pretrained=True, img_size=input_size
-            )
-            model = ISCNet(
-                backbone=backbone,
-                fc_dim=args.feature_dim,
-                l2_normalize=args.l2_normalize,
-            )
-            data_config = timm.data.resolve_model_data_config(backbone)
+        original_pos_embed = original_pos_embed.permute(0, 2, 1)
+        pos_embed_2d = original_pos_embed[:, :, 1:].view(1, -1, H, W)
+        resampled_pos_embed_2d = F.interpolate(pos_embed_2d, size=new_pos_embed_size, mode='bilinear', align_corners=False)
+        resampled_pos_embed = resampled_pos_embed_2d.view(1, -1, new_pos_embed_size[0] * new_pos_embed_size[1])
 
-            from timm.layers import resample_abs_pos_embed
-
-            weight["backbone.pos_embed"] = resample_abs_pos_embed(
-                weight["backbone.pos_embed"].float(),
-                new_size=[input_size[0] // 16, input_size[1] // 16],
-            ).half()
-
+        resampled_pos_embed = torch.cat([original_pos_embed[:, :, :1], resampled_pos_embed], dim=2)
+        weight["backbone.pos_embed"] = resampled_pos_embed.permute(0, 2, 1).half()
         model.load_state_dict(weight)
 
     loss_fn = losses.ContrastiveLoss(
@@ -720,11 +678,8 @@ def predict(args, pl_model=None):
 
     if pl_model is None:
         if args.weight is not None:
-            weight = torch.load(args.weight, map_location="cpu")
-            # from timm.layers import resample_abs_pos_embed
-            # weight['backbone.pos_embed'] = resample_abs_pos_embed(
-            # weight['backbone.pos_embed'].float(), new_size=[input_size[0] // 16, input_size[1] // 16]).half()
-            model.load_state_dict(weight)
+            state_dict = torch.load(args.weight, map_location="cpu")
+            model.load_state_dict(state_dict)
         pl_model = VSCLitModule(
             args=args,
             model=model,

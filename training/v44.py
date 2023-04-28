@@ -426,12 +426,6 @@ def train(args):
     cudnn.benchmark = True
     pl.seed_everything(args.seed, workers=True)
 
-    # if args.dryrun:
-    #     sample_size = 32
-    #     args.epochs = 1
-    # else:
-    #     sample_size = 9999999
-
     input_size = tuple(map(int, args.input_size.split("x")))
     if len(input_size) == 1:
         input_size = (input_size[0], input_size[0])
@@ -448,13 +442,23 @@ def train(args):
 
     if args.weight is not None:
         weight = torch.load(args.weight, map_location="cpu")
-        from timm.layers import resample_abs_pos_embed
+        original_pos_embed = weight["backbone.pos_embed"].float()
 
-        weight["backbone.pos_embed"] = resample_abs_pos_embed(
-            weight["backbone.pos_embed"].float(),
-            new_size=[input_size[0] // 16, input_size[1] // 16],
-        ).half()
+        input_size = [320, 320]
+        new_pos_embed_size = [input_size[0] // 16, input_size[1] // 16]
 
+        # original_pos_embed.shape: (1, seq_len, embed_dim)
+        # seq_len = H * W + 1 (for the [CLS] token)
+        H = int((original_pos_embed.shape[1] - 1) ** 0.5)
+        W = int((original_pos_embed.shape[1] - 1) / H)
+
+        original_pos_embed = original_pos_embed.permute(0, 2, 1)
+        pos_embed_2d = original_pos_embed[:, :, 1:].view(1, -1, H, W)
+        resampled_pos_embed_2d = F.interpolate(pos_embed_2d, size=new_pos_embed_size, mode='bilinear', align_corners=False)
+        resampled_pos_embed = resampled_pos_embed_2d.view(1, -1, new_pos_embed_size[0] * new_pos_embed_size[1])
+
+        resampled_pos_embed = torch.cat([original_pos_embed[:, :, :1], resampled_pos_embed], dim=2)
+        weight["backbone.pos_embed"] = resampled_pos_embed.permute(0, 2, 1).half()
         model.load_state_dict(weight)
 
     loss_fn = losses.ContrastiveLoss(
