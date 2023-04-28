@@ -487,8 +487,8 @@ def train(args):
     loss_fn = pml_dist.DistributedLossWrapper(loss=loss_fn, efficient=args.efficient)
 
     gt_paths = [
-        "/yokoo-data/isc/dev_queries_groundtruth.csv",
-        "/yokoo-data/isc/test_queries_groundtruth.csv",
+        Path(args.data) / "dev_queries_groundtruth.csv",
+        Path(args.data) / "test_queries_groundtruth.csv",
     ]
     gt = pd.concat([pd.read_csv(path, header=None) for path in gt_paths]).reset_index(
         drop=True
