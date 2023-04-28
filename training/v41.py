@@ -860,11 +860,6 @@ if __name__ == "__main__":
         required=True,
     )
     parser.add_argument(
-        "--gt_path",
-        type=str,
-        required=True,
-    )
-    parser.add_argument(
         "--eval_gt_path",
         type=str,
         required=True,
