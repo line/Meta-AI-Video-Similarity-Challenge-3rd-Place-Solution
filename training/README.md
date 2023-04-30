@@ -19,13 +19,24 @@ export COMPETITION_DATA=/app/data/vsc/competition_data
 export DISC_DATA=/app/data/isc
 ```
 
-Download the required data:
+Download the competition data:
 
 ```
 aws s3 cp s3://drivendata-competition-meta-vsc-data-sg/train/ ${COMPETITION_DATA}/train/ --recursive --no-sign-request
 aws s3 cp s3://drivendata-competition-meta-vsc-data-sg/test/ ${COMPETITION_DATA}/test/ --recursive --no-sign-request
 aws s3 cp s3://drivendata-competition-meta-vsc-data-sg/phase_2_uB82/ ${COMPETITION_DATA}/phase_2_uB82/ --recursive --no-sign-request
-DISC_DATA=${DISC_DATA} bash download_DISC21.sh  # download DISC21 data
+```
+
+Download the DISC21 dataset from [here](https://ai.facebook.com/datasets/disc21-downloads/), and extract it to `${DISC_DATA}`. The directory structure should look like this:
+
+```
+${DISC_DATA}
+├── train_images
+├── reference_images
+├── query_images
+├── query_images_phase2
+├── dev_queries_groundtruth.csv
+└── test_queries_groundtruth.csv
 ```
 
 Setup data and docker environment:
