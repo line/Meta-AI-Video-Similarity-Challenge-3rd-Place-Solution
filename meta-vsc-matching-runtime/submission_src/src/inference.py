@@ -195,7 +195,7 @@ def main(args):
 
 
 def distributed_worker_process(
-    args, rank, world_size, backend, output_filename, model, ref_path, noise_path
+    args, rank, world_size, backend, output_filename, model, ref_path, noise_path, pca_matrix
 ):
     from torch import distributed
 

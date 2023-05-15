@@ -21,19 +21,11 @@ import logging
 import os
 import tempfile
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List
 
-import numpy as np
 import pandas as pd
 import tqdm
 from src.inference import Accelerator, VideoReaderType
-from src.tta import (
-    TTA4ViewsTransform,
-    TTA5ViewsTransform,
-    TTA24ViewsTransform,
-    TTA30ViewsTransform,
-)
-from src.vsc.index import VideoFeature
 from src.vsc.storage import load_features, store_features
 from torch import multiprocessing
 
@@ -47,7 +39,6 @@ inference_parser.add_argument(
     "--accelerator", choices=[x.name.lower() for x in Accelerator], default="cpu"
 )
 inference_parser.add_argument("--output_path", nargs="+")
-# inference_parser.add_argument("--output_path", required=True)
 inference_parser.add_argument("--scratch_path", required=False)
 
 dataset_parser = parser.add_argument_group("Dataset")
@@ -64,9 +55,8 @@ dataset_parser.add_argument(
 dataset_parser.add_argument("--ffmpeg_path", default="ffmpeg")
 dataset_parser.add_argument("--tta", action="store_true")
 dataset_parser.add_argument(
-    "--mode", default="whole", choices=["whole", "eval", "test", "tune", "ensemble"]
+    "--mode", default="whole", choices=["whole", "eval", "test", "tune"]
 )
-dataset_parser.add_argument("--model", nargs="+")
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)-8s %(message)s",
@@ -94,113 +84,100 @@ def main(args):
             check=True,
         )
 
-    for output_path, model in zip(args.output_path, args.model):
-        with tempfile.TemporaryDirectory() as tmp_path:
-            splits = [
-                "_".join(p.split("/")[-2:]) for p in args.dataset_paths
-            ]  # ./vsc/eval_subset/reference -> eval_subset_reference
-            os.makedirs(output_path, exist_ok=True)
-            if args.scratch_path:
-                os.makedirs(args.scratch_path, exist_ok=True)
-            else:
-                args.scratch_path = tmp_path
-            if args.processes > 1:
-                processes = []
-                logger.info(f"Spawning {args.processes} processes")
-                accelerator = Accelerator[args.accelerator.upper()]
-                backend = "nccl" if accelerator == Accelerator.CUDA else "gloo"
-                # multiprocessing.set_start_method("spawn")
-                try:
-                    multiprocessing.set_start_method("spawn")
-                except RuntimeError:
-                    pass
-                worker_files = []
-                try:
-                    for rank in range(args.processes):
-                        output_files = [
-                            os.path.join(args.scratch_path, f"{split}_{rank}.npz")
-                            for split in splits
-                        ]
-                        worker_files.append(output_files)
-                        p = multiprocessing.Process(
-                            target=distributed_worker_process,
-                            args=(
-                                args,
-                                rank,
-                                args.processes,
-                                backend,
-                                output_files,
-                                args.dataset_paths,
-                                args.tta,
-                                model,
-                            ),
-                        )
-                        processes.append(p)
-                        p.start()
-                    worker_success = []
-                    for p in processes:
-                        p.join()
-                        worker_success.append(p.exitcode == os.EX_OK)
-                    success = all(worker_success)
-                finally:
-                    for p in processes:
-                        p.kill()
-                if success:
-
-                    def merge_feature_files(filenames, output_filename: str) -> int:
-                        features = []
-                        for fn in filenames:
-                            features.extend(load_features(fn))
-                        features = sorted(features, key=lambda x: x.video_id)
-                        store_features(output_filename, features)
-                        return len(features)
-
-                    output_files_each_split = [list(x) for x in zip(*worker_files)]
-                    for files, split in zip(output_files_each_split, splits):
-                        output_file = os.path.join(output_path, f"{split}.npz")
-                        num_files = merge_feature_files(files, output_file)
-                        logger.info(
-                            f"Features for {num_files} videos saved to {output_file}"
-                        )
-
-            else:
-                output_files = [
-                    os.path.join(output_path, f"{split}.npz") for split in splits
-                ]
-                worker_process(
-                    args,
-                    args.distributed_rank,
-                    args.distributed_size,
-                    output_files,
-                    args.dataset_paths,
-                    args.tta,
-                    model,
-                )
-                success = True
-
-        if success:
-            logger.info("Inference succeeded.")
+    with tempfile.TemporaryDirectory() as tmp_path:
+        splits = [
+            "_".join(p.split("/")[-2:]) for p in args.dataset_paths
+        ]  # ./vsc/eval_subset/reference -> eval_subset_reference
+        os.makedirs(args.output_path, exist_ok=True)
+        if args.scratch_path:
+            os.makedirs(args.scratch_path, exist_ok=True)
         else:
-            logger.error("Inference FAILED!")
+            args.scratch_path = tmp_path
+        if args.processes > 1:
+            processes = []
+            logger.info(f"Spawning {args.processes} processes")
+            accelerator = Accelerator[args.accelerator.upper()]
+            backend = "nccl" if accelerator == Accelerator.CUDA else "gloo"
+            multiprocessing.set_start_method("spawn")
+            worker_files = []
+            try:
+                for rank in range(args.processes):
+                    output_files = [
+                        os.path.join(args.scratch_path, f"{split}_{rank}.npz")
+                        for split in splits
+                    ]
+                    worker_files.append(output_files)
+                    p = multiprocessing.Process(
+                        target=distributed_worker_process,
+                        args=(
+                            args,
+                            rank,
+                            args.processes,
+                            backend,
+                            output_files,
+                            args.dataset_paths,
+                            args.tta,
+                        ),
+                    )
+                    processes.append(p)
+                    p.start()
+                worker_success = []
+                for p in processes:
+                    p.join()
+                    worker_success.append(p.exitcode == os.EX_OK)
+                success = all(worker_success)
+            finally:
+                for p in processes:
+                    p.kill()
+            if success:
 
-        if not success or args.gt_path is None:
-            return
+                def merge_feature_files(filenames, output_filename: str) -> int:
+                    features = []
+                    for fn in filenames:
+                        features.extend(load_features(fn))
+                    features = sorted(features, key=lambda x: x.video_id)
+                    store_features(output_filename, features)
+                    return len(features)
 
-        logger.info("Evaluating results")
+                output_files_each_split = [list(x) for x in zip(*worker_files)]
+                for files, split in zip(output_files_each_split, splits):
+                    output_file = os.path.join(args.output_path, f"{split}.npz")
+                    num_files = merge_feature_files(files, output_file)
+                    logger.info(
+                        f"Features for {num_files} videos saved to {output_file}"
+                    )
 
-        evaluate(
-            queries=load_features(os.path.join(output_path, f"{splits[0]}.npz")),
-            refs=load_features(os.path.join(output_path, f"{splits[1]}.npz")),
-            noises=load_features(os.path.join(output_path, f"{splits[-1]}.npz")),
-            gt_path=args.gt_path,
-            output_path=output_path,
-        )
-    from src.postproc import ensemble_match_results
-    from src.vsc.metrics import evaluate_matching_track
+        else:
+            output_files = [
+                os.path.join(args.output_path, f"{split}.npz") for split in splits
+            ]
+            worker_process(
+                args,
+                args.distributed_rank,
+                args.distributed_size,
+                output_files,
+                args.dataset_paths,
+                args.tta,
+            )
+            success = True
 
-    match_file = ensemble_match_results(args.output_path)
-    match_metrics = evaluate_matching_track(args.gt_path, match_file)
-    logger.info(f"segmentAP: {match_metrics.segment_ap.ap:.4f}")
+    if success:
+        logger.info("Inference succeeded.")
+    else:
+        logger.error("Inference FAILED!")
+
+    if not success or args.gt_path is None:
+        return
+
+    logger.info("Evaluating results")
+
+    evaluate(
+        queries=load_features(os.path.join(args.output_path, f"{splits[0]}.npz")),
+        refs=load_features(os.path.join(args.output_path, f"{splits[1]}.npz")),
+        noises=load_features(os.path.join(args.output_path, f"{splits[-1]}.npz")),
+        gt_path=args.gt_path,
+        output_path=args.output_path,
+    )
 
 
 def distributed_worker_process(pargs, rank, world_size, backend, *args, **kwargs):
@@ -219,33 +196,15 @@ def worker_process(
     output_files: List[str],
     dataset_paths: List[str],
     tta: bool = False,
-    model_name: str = "isc",
 ):
     from src.inference_impl import VideoDataset, get_device, run_inference
-    from src.model import (
-        create_model_in_runtime,
-        create_model_in_runtime_2,
-        model_efficient,
-        model_nfnetl1,
-        model_nfnetl2,
-    )
+    from src.model import create_model_in_runtime
     from torch.utils.data import DataLoader
 
     logger.info(f"Starting worker {rank} of {world_size}.")
     device = get_device(args, rank, world_size)
     logger.info("Loading model")
-    if model_name == "isc":
-        model, transforms = create_model_in_runtime(transforms_device=device)
-    elif model_name == "nfl2":
-        model, transforms = model_nfnetl2(transforms_device=device)
-    elif model_name == "nfl1":
-        model, transforms = model_nfnetl1(transforms_device=device)
-    elif model_name == "effic":
-        model, transforms = model_efficient(transforms_device=device)
-    elif model_name == "vit":
-        model, transforms = create_model_in_runtime_2(transforms_device=device)
-    else:
-        raise ValueError(f"Model {args.model} is not supported")
+    model, transforms = create_model_in_runtime(transforms_device=device)
     model = model.to(device).eval()
     logger.info("Setting up dataset")
     extensions = args.video_extensions.split(",")
@@ -265,6 +224,10 @@ def worker_process(
                 True,
                 False,
             ]
+        elif len(dataset_paths) == 1:
+            do_tta_list = [
+                True,
+            ]
         else:
             raise ValueError("TTA requires 3 or 4 datasets")
     else:
@@ -278,7 +241,6 @@ def worker_process(
             dataset_path,
             fps=args.fps,
             read_type=args.read_type,
-            # img_transform=transforms,
             batch_size=batch_size,
             extensions=extensions,
             distributed_world_size=world_size,
@@ -298,7 +260,7 @@ def worker_process(
         store_features(output_filename, video_features)
 
 
-def evaluate(queries, refs, noises, gt_path, output_path, sn_method="SN", mode="eval"):
+def evaluate(queries, refs, noises, gt_path, output_path, sn_method="SN"):
     import faiss
     from src.inference_impl import match
     from src.postproc import sliding_pca, sliding_pca_with_ref
@@ -323,17 +285,8 @@ def evaluate(queries, refs, noises, gt_path, output_path, sn_method="SN", mode="
     queries = video_features["query"]
     refs = video_features["ref"]
     noises = video_features["noise"]
-
-    if mode == "test":
-        store_features(Path(output_path) / "test_noise.npz", noises)
-        faiss.write_VectorTransform(
-            pca_matrix, str(Path(output_path) / "test_pca_matrix.bin")
-        )
-    else:
-        store_features(Path(output_path) / "train_noise.npz", noises)
-        faiss.write_VectorTransform(
-            pca_matrix, str(Path(output_path) / "train_pca_matrix.bin")
-        )
+    store_features(Path(output_path) / "noise.npz", noises)
+    faiss.write_VectorTransform(pca_matrix, str(Path(output_path) / "pca_matrix.bin"))
 
     if sn_method == "SN":
         queries, refs = score_normalize_with_ref(
@@ -355,10 +308,7 @@ def evaluate(queries, refs, noises, gt_path, output_path, sn_method="SN", mode="
             alpha=2.0,
         )
 
-    if mode == "test":
-        store_features(Path(output_path) / "test_processed_ref.npz", refs)
-    else:
-        store_features(Path(output_path) / "train_processed_ref.npz", refs)
+    store_features(Path(output_path) / "processed_ref.npz", refs)
 
     candidates, matches = match(
         queries=queries,
@@ -379,12 +329,9 @@ def evaluate(queries, refs, noises, gt_path, output_path, sn_method="SN", mode="
     ap = average_precision(CandidatePair.from_matches(gt_matches), candidates)
 
     candidates = sorted(candidates, key=lambda x: x.score, reverse=True)
-    if mode == "test":
-        CandidatePair.write_csv(candidates, Path(output_path) / "test_candidates.csv")
-        match_file = Path(output_path) / "test_matches.csv"
-    else:
-        CandidatePair.write_csv(candidates, Path(output_path) / "train_candidates.csv")
-        match_file = Path(output_path) / "train_matches.csv"
+    CandidatePair.write_csv(candidates, Path(output_path) / "candidates.csv")
+
+    match_file = Path(output_path) / "matches.csv"
     Match.write_csv(matches, match_file, drop_dup=True)
     match_metrics = evaluate_matching_track(gt_path, match_file)
 
@@ -519,55 +466,36 @@ def tune(
     df.to_csv("tuning_result.csv", index=False)
 
 
-def ensemble(gt_path, output_path):
-    from src.postproc import ensemble_match_results
-    from src.vsc.metrics import evaluate_matching_track
-
-    match_files = [f"{p}/test_matches.csv" for p in output_path]
-    output_file = "full_matches.csv"
-    math_file = ensemble_match_results(match_files, output_file)
-
-
 if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.mode == "eval":
         evaluate(
-            # queries=load_features(os.path.join(args.output_path, f"eval_subset_query.npz")),
-            # refs=load_features(os.path.join(args.output_path, f"eval_subset_reference.npz")),
-            # noises=load_features(os.path.join(args.output_path, f"eval_subset_noise.npz")),
             queries=load_features(os.path.join(args.output_path, f"train_query.npz")),
             refs=load_features(os.path.join(args.output_path, f"train_reference.npz")),
             noises=load_features(os.path.join(args.output_path, f"test_reference.npz")),
             gt_path=args.gt_path,
             output_path=args.output_path,
             sn_method="SN",
-            mode=args.mode,
         )
     elif args.mode == "test":
         evaluate(
-            queries=load_features(os.path.join(args.output_path[0], f"test_query.npz")),
-            refs=load_features(
-                os.path.join(args.output_path[0], f"test_reference.npz")
+            queries=load_features(
+                os.path.join(args.output_path, f"phase_2_uB82_query.npz")
             ),
+            refs=load_features(os.path.join(args.output_path, f"test_reference.npz")),
             noises=load_features(
-                os.path.join(args.output_path[0], f"train_reference.npz")
+                os.path.join(args.output_path, f"train_reference.npz")
             ),
             gt_path=args.gt_path,
-            output_path=args.output_path[0],
+            output_path=args.output_path,
             sn_method="SN",
-            mode=args.mode,
         )
     elif args.mode == "tune":
         tune(
             queries=load_features(os.path.join(args.output_path, f"train_query.npz")),
             refs=load_features(os.path.join(args.output_path, f"train_reference.npz")),
             noises=load_features(os.path.join(args.output_path, f"test_reference.npz")),
-            gt_path=args.gt_path,
-            output_path=args.output_path,
-        )
-    elif args.mode == "ensemble":
-        ensemble(
             gt_path=args.gt_path,
             output_path=args.output_path,
         )

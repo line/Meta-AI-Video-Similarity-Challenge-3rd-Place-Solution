@@ -12,40 +12,30 @@ from typing import Iterable, List, Tuple
 
 import faiss
 import numpy as np
-import pandas as pd
 import torch
-import torch.nn as nn
 import tqdm
 from src.inference import Accelerator, VideoReaderType
-from src.metadata import FFProbeMetadata, get_video_metadata
 from src.model import create_model_in_runtime, create_model_in_runtime_2
 from src.postproc import sliding_pca
 from src.score_normalization import score_normalize
 from src.tta import (
     TTA4ViewsTransform,
     TTA5ViewsTransform,
-    TTA24ViewsTransform,
-    TTA30ViewsTransform,
 )
 from src.video_reader.ffmpeg_py_video_reader import FFMpegPyVideoReader
 from src.video_reader.ffmpeg_video_reader import FFMpegVideoReader
 from src.vsc.candidates import CandidateGeneration, MaxScoreAggregation
 from src.vsc.index import VideoFeature
 from src.vsc.localization import (
-    VCSLLocalizationCandidateScore,
     VCSLLocalizationMatchScore,
-    VCSLLocalizationMaxSim,
 )
 from src.vsc.metrics import (
     CandidatePair,
     Match,
-    average_precision,
-    evaluate_matching_track,
 )
 from src.vsc.storage import load_features, store_features
 from torch.utils.data import DataLoader, IterableDataset
 from torch.utils.data._utils.collate import default_collate
-from torchvision import transforms
 
 logging.basicConfig(
     format="%(asctime)s %(levelname)-8s %(message)s",
@@ -90,22 +80,7 @@ class VideoDataset(IterableDataset):
         filenames = [
             name for name in filenames if Path(name).stem not in ["R102796", "R133364"]
         ]
-
-        if filter_by_asr:
-            self.metadatas = {
-                Path(path).stem: get_video_metadata(path) for path in filenames
-            }
-            filtered_filenames = [
-                path
-                for path in filenames
-                if self.metadatas[Path(path).stem].stream.sample_aspect_ratio
-                is not None
-            ]
-        else:
-            self.metadatas = None
-            filtered_filenames = filenames
-        self.videos = sorted(filtered_filenames)
-        print(f"filtered: #{len(filenames)} -> #{len(self.videos)}")
+        self.videos = sorted(filenames)
 
         if not self.videos:
             raise Exception("No videos found!")
@@ -228,9 +203,6 @@ def localize_and_verify(
     min_bins=1,
     max_peaks=100,
     min_peaks=10,
-    # discontinue=3, min_sim=0.2, min_length=5, max_iou=0.3  # DTW
-    # discontinue=3, min_sim=0.0, min_length=5, max_iou=0.3, sum_sim=8, ave_sim=0.3, diagonal_thres=10,  # DP
-    # iou_thresh=0.9, min_sim=0.0, min_bins=1, max_peaks=100, min_peaks=10,  # HV
 ) -> List[Match]:
     num_to_localize = int(len(queries) * localize_per_query)
     candidates = candidates[:num_to_localize]
@@ -306,10 +278,6 @@ def match(
         retrieve_per_query=retrieve_per_query,
         candidates_per_query=candidates_per_query,
     )
-    # os.makedirs(output_path, exist_ok=True)
-    # candidate_file = os.path.join(output_path, "candidates.csv")
-    # CandidatePair.write_csv(candidates, candidate_file)
-    # candidates = CandidatePair.read_csv(candidate_file)
 
     # Localize and verify
     matches = localize_and_verify(
@@ -371,8 +339,6 @@ def worker_process(
         args.dataset_path,
         fps=args.fps,
         read_type=args.read_type,
-        # img_transform=transforms,
-        # batch_size=args.batch_size,
         batch_size=1,
         extensions=extensions,
         distributed_world_size=world_size,
@@ -454,12 +420,7 @@ def run_inference(
         name = names[0]
         if transforms is not None:
             if tta:
-                metadatas = dataloader.dataset.metadatas
-                # if metadatas[name].format.nb_streams == 2:
-                if metadatas[name].stream.time_base == "1/10240":
-                    tta_transforms = TTA4ViewsTransform(transforms)
-                else:
-                    tta_transforms = TTA5ViewsTransform(transforms)
+                tta_transforms = TTA5ViewsTransform(transforms)
                 img = tta_transforms(batch["input"].to(device))
             else:
                 img = transforms(batch["input"].to(device))
@@ -484,82 +445,6 @@ def run_inference(
             .transpose(1, 0, 2)
             .reshape(-1, feature.shape[1])
         )
-    yield VideoFeature(
-        video_id=name,
-        timestamps=timestamps,
-        feature=feature,
-    )
-
-
-@torch.no_grad()
-def run_inference_ensemble(
-    dataloader, model_list, device, transforms_list=None, weight_list=None, tta=True
-) -> Iterable[VideoFeature]:
-    name = None
-    embeddings = []
-    timestamps = []
-
-    if weight_list is None:
-        weight_list = [1.0] * len(model_list)
-
-    for batch in dataloader:
-        names = batch["name"]
-        assert names[0] == names[-1]  # single-video batches
-        if name is not None and name != names[0]:
-            timestamps = np.concatenate(timestamps, axis=0)
-            feature = np.concatenate(embeddings, axis=0)
-            if tta:
-                timestamps = timestamps.reshape(-1, num_views).transpose(1, 0).ravel()
-                feature = (
-                    feature.reshape(-1, num_views, feature.shape[1])
-                    .transpose(1, 0, 2)
-                    .reshape(-1, feature.shape[1])
-                )
-            yield VideoFeature(
-                video_id=name,
-                timestamps=timestamps,
-                feature=feature,
-            )
-            embeddings = []
-            timestamps = []
-        name = names[0]
-
-        imgs = []
-        for transforms in transforms_list:
-            if tta:
-                metadatas = dataloader.dataset.metadatas
-                # if metadatas[name].format.nb_streams == 2:
-                if metadatas[name].stream.time_base == "1/10240":
-                    tta_transforms = TTA4ViewsTransform(transforms)
-                else:
-                    tta_transforms = TTA5ViewsTransform(transforms)
-                img = tta_transforms(batch["input"].to(device))
-            else:
-                img = transforms(batch["input"].to(device))
-            imgs.append(img)
-
-        emb_cat = []
-        for img, model, weight in zip(imgs, model_list, weight_list):
-            emb = model(img).cpu().numpy() * weight
-            emb_cat.append(emb)
-        emb = np.concatenate(emb_cat, axis=1)
-        embeddings.append(emb)
-
-        num_views = imgs[0].shape[0] // batch["input"].shape[0]
-        ts = batch["timestamp"].numpy()
-        ts = np.repeat(ts, num_views)
-        timestamps.append(ts)
-
-    timestamps = np.concatenate(timestamps, axis=0)
-    feature = np.concatenate(embeddings, axis=0)
-    if tta:
-        timestamps = timestamps.reshape(-1, num_views).transpose(1, 0).ravel()
-        feature = (
-            feature.reshape(-1, num_views, feature.shape[1])
-            .transpose(1, 0, 2)
-            .reshape(-1, feature.shape[1])
-        )
-
     yield VideoFeature(
         video_id=name,
         timestamps=timestamps,
