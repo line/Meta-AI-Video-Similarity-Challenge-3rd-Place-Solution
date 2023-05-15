@@ -17,7 +17,6 @@ import torch
 import torch.nn as nn
 import tqdm
 from src.inference import Accelerator, VideoReaderType
-from src.metadata import FFProbeMetadata, get_video_metadata
 from src.model import create_copy_type_pred_model, create_model_in_runtime
 from src.postproc import sliding_pca
 from src.score_normalization import score_normalize
@@ -85,22 +84,7 @@ class VideoDataset(IterableDataset):
         filenames = [
             name for name in filenames if Path(name).stem not in ["R102796", "R133364"]
         ]
-
-        if filter_by_asr:
-            self.metadatas = {
-                Path(path).stem: get_video_metadata(path) for path in filenames
-            }
-            filtered_filenames = [
-                path
-                for path in filenames
-                if self.metadatas[Path(path).stem].stream.sample_aspect_ratio
-                is not None
-            ]
-        else:
-            self.metadatas = None
-            filtered_filenames = filenames
-        self.videos = sorted(filtered_filenames)
-        print(f"filtered: #{len(filenames)} -> #{len(self.videos)}")
+        self.videos = sorted(filenames)
 
         if not self.videos:
             raise Exception("No videos found!")
@@ -227,7 +211,7 @@ def worker_process(args, rank, world_size, output_filename):
         distributed_rank=rank,
         video_reader=video_reader,
         ffmpeg_path=args.ffmpeg_path,
-        filter_by_asr=True,
+        filter_by_asr=False,
     )
     loader = DataLoader(dataset, batch_size=None, pin_memory=device.type == "cuda")
 
@@ -246,7 +230,11 @@ def worker_process(args, rank, world_size, output_filename):
 
     del loader
     del model
+    del copytype_model
     del dataset
+
+    alpha = 1.0
+    factors = [(1 / (vf.feature @ vf.feature.T).mean()) ** alpha for vf in queries]
 
     if args.score_norm_features:
         stride = args.stride if args.stride is not None else args.fps
@@ -259,6 +247,15 @@ def worker_process(args, rank, world_size, output_filename):
             load_features(args.score_norm_features),
             beta=1.0,
         )
+
+    queries = [
+        VideoFeature(
+            video_id=vf.video_id,
+            timestamps=vf.timestamps,
+            feature=vf.feature * factor,
+        )
+        for vf, factor in zip(queries, factors)
+    ]
 
     store_features(output_filename, queries)
     logger.info(
@@ -330,15 +327,11 @@ def run_inference(
 
         _transforms = transforms
 
+        thresh = 0.15
         # Extend transforms
         if _transforms is not None and tta:
-            metadatas = dataloader.dataset.metadatas
 
-            # Judge by metadata (hstack + vstack)
-            if metadatas[name].stream.time_base == "1/10240":
-                _transforms = TTA4ViewsTransform(_transforms)
-            # Judge by copytype pred model
-            elif copytype_model is not None:
+            if copytype_model is not None:
                 pred = batch_forward(copytype_model, imgs, batch_size=batch_size)
                 assert len(pred["hstack"]) == len(
                     imgs
@@ -347,12 +340,14 @@ def run_inference(
                     imgs
                 ), f"{len(pred['vstack'])=} != {len(imgs)=}"
 
+                vstack_hstack_prob = torch.median(pred["vstack_hstack"])
                 hstack_prob = torch.median(pred["hstack"])
                 vstack_prob = torch.median(pred["vstack"])
 
-                thresh = 0.15
-
-                if hstack_prob > thresh:
+                if vstack_hstack_prob > thresh:
+                    _transforms = TTA4ViewsTransform(_transforms)
+                    print('vstack_hstack', vstack_hstack_prob)
+                elif hstack_prob > thresh:
                     _transforms = TTAHorizontalStackTransform(_transforms)
                 elif vstack_prob > thresh:
                     _transforms = TTAVerticalStackTransform(_transforms)

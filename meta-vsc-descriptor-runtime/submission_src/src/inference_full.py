@@ -21,13 +21,12 @@ import logging
 import os
 import tempfile
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List
 
-import numpy as np
 import pandas as pd
 import tqdm
 from src.inference import Accelerator, VideoReaderType
-from src.inference_impl import search, validate_total_descriptors
+from src.inference_impl import search
 from src.vsc.index import VideoFeature
 from src.vsc.storage import load_features, store_features
 from torch import multiprocessing
@@ -189,10 +188,6 @@ def main(args):
         output_path=args.output_path,
     )
 
-    # for split in splits:
-    #     logger.info(f"Validating {split} descriptors")
-    #     validate_total_descriptors(video_features=video_features_dict[split])
-
 
 def distributed_worker_process(pargs, rank, world_size, backend, *args, **kwargs):
     from torch import distributed
@@ -254,12 +249,10 @@ def worker_process(
     for output_filename, dataset_path, do_tta in zip(
         output_files, dataset_paths, do_tta_list
     ):
-        # batch_size = 1 if do_tta else args.batch_size
         dataset = VideoDataset(
             dataset_path,
             fps=args.fps,
             read_type=args.read_type,
-            # img_transform=transforms,
             batch_size=1,
             extensions=extensions,
             distributed_world_size=world_size,
@@ -288,7 +281,7 @@ def worker_process(
 
 def evaluate(queries, refs, noises, gt_path, output_path, sn_method="SN"):
     import faiss
-    from src.postproc import sliding_pca, sliding_pca_with_ref
+    from src.postproc import sliding_pca_with_ref
     from src.score_normalization import (
         negative_embedding_subtraction,
         score_normalize_with_ref,
@@ -297,7 +290,6 @@ def evaluate(queries, refs, noises, gt_path, output_path, sn_method="SN"):
         CandidatePair,
         Match,
         average_precision,
-        evaluate_matching_track,
     )
 
     stride = args.stride if args.stride is not None else args.fps
@@ -367,13 +359,6 @@ def tune(
 
     param_grid = [
         {
-            #     "sn_method": ['SN'],
-            #     "beta": [0.8, 0.9, 1.0],
-            #     "stride": [3],
-            #     "fps": [2],
-            #     "k": [10],
-            #     "alpha": [2.0],
-            # }, {
             "sn_method": ["NES"],
             "beta": [1.2, 1.5],
             "stride": [3],
